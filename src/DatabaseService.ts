@@ -83,7 +83,7 @@ export class DatabaseService {
 
       const flags = SQLite.SQLITE_OPEN_READWRITE | SQLite.SQLITE_OPEN_CREATE;
       this.db = await this.sqlite3.open_v2('world_fog_of_war', flags, 'idb-batch');
-      
+
       if (!this.db) {
         throw new Error("Failed to open database");
       }
@@ -100,72 +100,49 @@ export class DatabaseService {
 
   private async createTable() {
     if (!this.db) return;
-    
+
     let tableExists = false;
-    let hasUnique = false;
-    
+    let schemaSql = "";
+
     await this.sqlite3.exec(this.db, "SELECT sql FROM sqlite_master WHERE name='locations'", (row: any[]) => {
       if (row[0]) {
         tableExists = true;
-        if (row[0].includes('UNIQUE')) {
-          hasUnique = true;
-        }
+        schemaSql = row[0];
       }
     });
 
-    if (!tableExists) {
-      console.log("DatabaseService: Creating locations table");
-      await this.sqlite3.exec(this.db, `
-        CREATE TABLE locations (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          lat REAL,
-          lng REAL,
-          timestamp INTEGER,
-          UNIQUE(lat, lng, timestamp) ON CONFLICT IGNORE
-        );
-        CREATE INDEX idx_locations_coords ON locations(lat, lng);
-      `);
-    } else if (!hasUnique) {
-      console.log("DatabaseService: Migration needed - Adding UNIQUE constraint");
+    // We want a UNIQUE constraint on (lat, lng) to allow "Upserting" the timestamp.
+    // If the schema is old (includes timestamp in UNIQUE or no UNIQUE), we migrate.
+    const desiredUnique = 'UNIQUE(lat, lng)';
+    if (!tableExists || !schemaSql.includes(desiredUnique)) {
+      console.log("DatabaseService: Table creation or migration needed.");
       await this.sqlite3.exec(this.db, `
         BEGIN TRANSACTION;
-        CREATE TABLE locations_new (
+        CREATE TABLE IF NOT EXISTS locations_v2 (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           lat REAL,
           lng REAL,
           timestamp INTEGER,
-          UNIQUE(lat, lng, timestamp) ON CONFLICT IGNORE
+          UNIQUE(lat, lng) ON CONFLICT REPLACE
         );
-        INSERT OR IGNORE INTO locations_new (lat, lng, timestamp) SELECT lat, lng, timestamp FROM locations;
-        DROP TABLE locations;
-        ALTER TABLE locations_new RENAME TO locations;
-        CREATE INDEX idx_locations_coords ON locations(lat, lng);
+      `);
+
+      if (tableExists) {
+        // Copy old data into new table. ON CONFLICT REPLACE ensures we keep one record per coord.
+        // To keep the LATEST timestamp, we should ideally sort by timestamp, but for simplicity
+        // we just insert.
+        await this.sqlite3.exec(this.db, `
+          INSERT OR REPLACE INTO locations_v2 (lat, lng, timestamp)
+          SELECT lat, lng, timestamp FROM locations ORDER BY timestamp ASC;
+        `);
+        await this.sqlite3.exec(this.db, `DROP TABLE locations;`);
+      }
+
+      await this.sqlite3.exec(this.db, `
+        ALTER TABLE locations_v2 RENAME TO locations;
+        CREATE INDEX IF NOT EXISTS idx_locations_coords ON locations(lat, lng);
         COMMIT;
       `);
-    }
-  }
-
-  async debugLogSample() {
-    if (!this.db) return;
-    await this.sqlite3.exec(this.db, 'SELECT lat, lng FROM locations LIMIT 5', (row: any[]) => {
-      console.log("DB Sample Point:", row[0], row[1]);
-    });
-    
-    await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
-      console.log("DB Total Count:", row[0]);
-    });
-  }
-
-  private parseLatLngString(s: string): {lat: number, lng: number} | null {
-    try {
-      const parts = s.split(',');
-      if (parts.length !== 2) return null;
-      const lat = parseFloat(parts[0].replace(/[^\d.-]/g, ''));
-      const lng = parseFloat(parts[1].replace(/[^\d.-]/g, ''));
-      if (isNaN(lat) || isNaN(lng)) return null;
-      return { lat, lng };
-    } catch (e) {
-      return null;
     }
   }
 
@@ -175,7 +152,7 @@ export class DatabaseService {
       if (!this.db) throw new Error("Database not initialized");
 
       let points: LocationPoint[] = [];
-      
+
       if (data.locations) {
         points = data.locations;
       } else if (data.timelineEdits) {
@@ -217,16 +194,24 @@ export class DatabaseService {
         }
       }
 
-      console.log(`DatabaseService: Parsed ${points.length} points from file.`);
       if (points.length === 0) return;
+
+      // Sort points by timestamp ascending so that later points replace earlier ones during import
+      const sortedPoints = points.map(p => {
+        let ts = 0;
+        if (p.timestampMs) ts = typeof p.timestampMs === 'string' ? parseInt(p.timestampMs) : p.timestampMs;
+        else if (p.timestamp) ts = new Date(p.timestamp).getTime();
+        return { ...p, calculatedTs: ts };
+      }).sort((a, b) => a.calculatedTs - b.calculatedTs);
 
       await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
 
       try {
-        const sql = 'INSERT OR IGNORE INTO locations (lat, lng, timestamp) VALUES (?, ?, ?)';
-        
+        // ON CONFLICT REPLACE ensures we update the timestamp if coord exists
+        const sql = 'INSERT OR REPLACE INTO locations (lat, lng, timestamp) VALUES (?, ?, ?)';
+
         for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          for (const p of points) {
+          for (const p of sortedPoints) {
             let lat: number;
             let lng: number;
 
@@ -240,34 +225,27 @@ export class DatabaseService {
               lat = latE7 / 1e7;
               lng = lngE7 / 1e7;
             }
-            
+
             lat = Math.round(lat * 1e7) / 1e7;
             lng = Math.round(lng * 1e7) / 1e7;
 
-            let timestampValue: number = 0;
-            if (p.timestampMs) {
-              timestampValue = typeof p.timestampMs === 'string' ? parseInt(p.timestampMs) : p.timestampMs;
-            } else if (p.timestamp) {
-              timestampValue = new Date(p.timestamp).getTime();
-            }
-
             this.sqlite3.bind_double(stmt, 1, lat);
             this.sqlite3.bind_double(stmt, 2, lng);
-            this.sqlite3.bind_int64(stmt, 3, BigInt(timestampValue));
+            this.sqlite3.bind_int64(stmt, 3, BigInt(p.calculatedTs));
 
             await this.sqlite3.step(stmt);
             this.sqlite3.reset(stmt);
           }
-          break; 
+          break;
         }
 
         await this.sqlite3.exec(this.db, 'COMMIT');
-        
+
         let finalCount = 0;
         await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
           finalCount = row[0];
         });
-        console.log(`DatabaseService: Import finished. Total unique points in DB: ${finalCount}`);
+        console.log(`DatabaseService: Import finished. Total unique coords in DB: ${finalCount}`);
       } catch (e) {
         console.error("DatabaseService: Error during import", e);
         try {
@@ -278,13 +256,55 @@ export class DatabaseService {
     });
   }
 
+  async getNearestPoint(lat: number, lng: number, radiusDegrees: number): Promise<{lat: number, lng: number, timestamp: number} | null> {
+    if (!this.db) return null;
+
+    return this.withLock(async () => {
+      let nearest: {lat: number, lng: number, timestamp: number} | null = null;
+      const sql = `
+        SELECT lat, lng, timestamp
+        FROM locations
+        WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+        LIMIT 200
+      `;
+
+      try {
+        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
+          this.sqlite3.bind_double(stmt, 1, lat - radiusDegrees);
+          this.sqlite3.bind_double(stmt, 2, lat + radiusDegrees);
+          this.sqlite3.bind_double(stmt, 3, lng - radiusDegrees);
+          this.sqlite3.bind_double(stmt, 4, lng + radiusDegrees);
+
+          let minBaseDist = Infinity;
+          while (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
+            const pLat = this.sqlite3.column_double(stmt, 0);
+            const pLng = this.sqlite3.column_double(stmt, 1);
+            const pTime = Number(this.sqlite3.column_int64(stmt, 2));
+
+            const dLat = pLat - lat;
+            const dLng = pLng - lng;
+            const distSq = dLat * dLat + dLng * dLng;
+
+            if (distSq < minBaseDist) {
+              minBaseDist = distSq;
+              nearest = { lat: pLat, lng: pLng, timestamp: pTime };
+            }
+          }
+        }
+      } catch (e) {
+        console.error("DatabaseService: Nearest query error", e);
+      }
+      return nearest;
+    });
+  }
+
   async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number): Promise<{lat: number, lng: number}[]> {
     if (!this.db) return [];
 
     return this.withLock(async () => {
       const points: {lat: number, lng: number}[] = [];
       const sql = `SELECT lat, lng FROM locations WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?`;
-      
+
       try {
         for await (const stmt of this.sqlite3.statements(this.db, sql)) {
           this.sqlite3.bind_double(stmt, 1, minLat);
@@ -304,6 +324,19 @@ export class DatabaseService {
       }
       return points;
     });
+  }
+
+  private parseLatLngString(s: string): {lat: number, lng: number} | null {
+    try {
+      const parts = s.split(',');
+      if (parts.length !== 2) return null;
+      const lat = parseFloat(parts[0].replace(/[^\d.-]/g, ''));
+      const lng = parseFloat(parts[1].replace(/[^\d.-]/g, ''));
+      if (isNaN(lat) || isNaN(lng)) return null;
+      return { lat, lng };
+    } catch (e) {
+      return null;
+    }
   }
 }
 

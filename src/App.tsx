@@ -11,6 +11,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [importStatus, setImportStatus] = useState('');
 
+  const [tooltip, setTooltip] = useState<{ x: number, y: number, text: string } | null>(null);
+
   useEffect(() => {
     if (map.current) return;
     if (!mapContainer.current) return;
@@ -49,6 +51,30 @@ function App() {
 
       map.current.on('error', (e) => {
         console.error("MapLibre error:", e);
+      });
+
+      map.current.on('mousemove', async (e) => {
+        if (!map.current) return;
+        
+        // Find nearest point within current visual radius
+        // 0.0001 degrees is ~11 meters, good enough for "hovering a circle"
+        const radius = 0.0002; 
+        const nearest = await databaseService.getNearestPoint(e.lngLat.lat, e.lngLat.lng, radius);
+        
+        if (nearest) {
+          const date = new Date(nearest.timestamp);
+          const timeStr = date.toLocaleString([], { 
+            year: 'numeric', month: '2-digit', day: '2-digit', 
+            hour: '2-digit', minute: '2-digit' 
+          });
+          setTooltip({
+            x: e.point.x,
+            y: e.point.y,
+            text: `${nearest.lat.toFixed(5)}, ${nearest.lng.toFixed(5)}\nLatest visit: ${timeStr}`
+          });
+        } else {
+          setTooltip(null);
+        }
       });
 
       map.current.on('load', async () => {
@@ -122,8 +148,29 @@ function App() {
   };
 
   return (
-    <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', backgroundColor: '#1a1a1a' }}>
+    <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', backgroundColor: '#1a1a1a', position: 'relative' }}>
       <div id="map" ref={mapContainer} style={{ flexGrow: 1, height: '100%', width: '100%' }} />
+      
+      {tooltip && (
+        <div style={{
+          position: 'absolute',
+          left: tooltip.x + 15,
+          top: tooltip.y + 15,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          color: 'white',
+          padding: '8px 12px',
+          borderRadius: '4px',
+          pointerEvents: 'none',
+          zIndex: 100,
+          fontSize: '12px',
+          whiteSpace: 'pre-line',
+          boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
+          border: '1px solid rgba(255,255,255,0.2)'
+        }}>
+          {tooltip.text}
+        </div>
+      )}
+
       <div id="controls">
         <h3 style={{ margin: '0 0 10px 0' }}>World Fog of War</h3>
         <input
