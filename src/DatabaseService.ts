@@ -9,6 +9,8 @@ export interface LocationPoint {
   longitudeE7?: number;
   latE7?: number;
   lngE7?: number;
+  lat?: number;
+  lng?: number;
   timestampMs?: string | number;
   timestamp?: string;
 }
@@ -28,6 +30,25 @@ export interface TimelineData {
     }
   }>;
   locations?: LocationPoint[];
+  semanticSegments?: Array<{
+    startTime?: string;
+    endTime?: string;
+    timelinePath?: Array<{
+      point?: string;
+      time?: string;
+    }>;
+    visit?: {
+      topCandidate?: {
+        placeLocation?: {
+          latLng?: string;
+        }
+      }
+    };
+    activity?: {
+      start?: { latLng?: string };
+      end?: { latLng?: string };
+    }
+  }>;
 }
 
 export class DatabaseService {
@@ -79,15 +100,73 @@ export class DatabaseService {
 
   private async createTable() {
     if (!this.db) return;
-    await this.sqlite3.exec(this.db, `
-      CREATE TABLE IF NOT EXISTS locations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        lat REAL,
-        lng REAL,
-        timestamp INTEGER
-      );
-      CREATE INDEX IF NOT EXISTS idx_locations_coords ON locations(lat, lng);
-    `);
+    
+    let tableExists = false;
+    let hasUnique = false;
+    
+    await this.sqlite3.exec(this.db, "SELECT sql FROM sqlite_master WHERE name='locations'", (row: any[]) => {
+      if (row[0]) {
+        tableExists = true;
+        if (row[0].includes('UNIQUE')) {
+          hasUnique = true;
+        }
+      }
+    });
+
+    if (!tableExists) {
+      console.log("DatabaseService: Creating locations table");
+      await this.sqlite3.exec(this.db, `
+        CREATE TABLE locations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          lat REAL,
+          lng REAL,
+          timestamp INTEGER,
+          UNIQUE(lat, lng, timestamp) ON CONFLICT IGNORE
+        );
+        CREATE INDEX idx_locations_coords ON locations(lat, lng);
+      `);
+    } else if (!hasUnique) {
+      console.log("DatabaseService: Migration needed - Adding UNIQUE constraint");
+      await this.sqlite3.exec(this.db, `
+        BEGIN TRANSACTION;
+        CREATE TABLE locations_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          lat REAL,
+          lng REAL,
+          timestamp INTEGER,
+          UNIQUE(lat, lng, timestamp) ON CONFLICT IGNORE
+        );
+        INSERT OR IGNORE INTO locations_new (lat, lng, timestamp) SELECT lat, lng, timestamp FROM locations;
+        DROP TABLE locations;
+        ALTER TABLE locations_new RENAME TO locations;
+        CREATE INDEX idx_locations_coords ON locations(lat, lng);
+        COMMIT;
+      `);
+    }
+  }
+
+  async debugLogSample() {
+    if (!this.db) return;
+    await this.sqlite3.exec(this.db, 'SELECT lat, lng FROM locations LIMIT 5', (row: any[]) => {
+      console.log("DB Sample Point:", row[0], row[1]);
+    });
+    
+    await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
+      console.log("DB Total Count:", row[0]);
+    });
+  }
+
+  private parseLatLngString(s: string): {lat: number, lng: number} | null {
+    try {
+      const parts = s.split(',');
+      if (parts.length !== 2) return null;
+      const lat = parseFloat(parts[0].replace(/[^\d.-]/g, ''));
+      const lng = parseFloat(parts[1].replace(/[^\d.-]/g, ''));
+      if (isNaN(lat) || isNaN(lng)) return null;
+      return { lat, lng };
+    } catch (e) {
+      return null;
+    }
   }
 
   async importGoogleHistory(data: TimelineData) {
@@ -96,6 +175,7 @@ export class DatabaseService {
       if (!this.db) throw new Error("Database not initialized");
 
       let points: LocationPoint[] = [];
+      
       if (data.locations) {
         points = data.locations;
       } else if (data.timelineEdits) {
@@ -109,33 +189,60 @@ export class DatabaseService {
             });
           }
         }
+      } else if (data.semanticSegments) {
+        for (const segment of data.semanticSegments) {
+          if (segment.timelinePath) {
+            for (const tp of segment.timelinePath) {
+              if (tp.point) {
+                const p = this.parseLatLngString(tp.point);
+                if (p) points.push({ lat: p.lat, lng: p.lng, timestamp: tp.time });
+              }
+            }
+          }
+          const visitLoc = segment.visit?.topCandidate?.placeLocation?.latLng;
+          if (visitLoc) {
+            const p = this.parseLatLngString(visitLoc);
+            if (p) points.push({ lat: p.lat, lng: p.lng, timestamp: segment.startTime });
+          }
+          if (segment.activity) {
+            if (segment.activity.start?.latLng) {
+              const p = this.parseLatLngString(segment.activity.start.latLng);
+              if (p) points.push({ lat: p.lat, lng: p.lng, timestamp: segment.startTime });
+            }
+            if (segment.activity.end?.latLng) {
+              const p = this.parseLatLngString(segment.activity.end.latLng);
+              if (p) points.push({ lat: p.lat, lng: p.lng, timestamp: segment.endTime });
+            }
+          }
+        }
       }
 
+      console.log(`DatabaseService: Parsed ${points.length} points from file.`);
       if (points.length === 0) return;
 
       await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
 
       try {
-        const sql = 'INSERT INTO locations (lat, lng, timestamp) VALUES (?, ?, ?)';
-        let insertedCount = 0;
-
+        const sql = 'INSERT OR IGNORE INTO locations (lat, lng, timestamp) VALUES (?, ?, ?)';
+        
         for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          let lastLat = 0;
-          let lastLng = 0;
-
           for (const p of points) {
-            const latE7 = p.latE7 ?? p.latitudeE7;
-            const lngE7 = p.lngE7 ?? p.longitudeE7;
-            
-            if (latE7 === undefined || lngE7 === undefined) continue;
+            let lat: number;
+            let lng: number;
 
-            const lat = latE7 / 1e7;
-            const lng = lngE7 / 1e7;
-            
-            if (Math.round(lat * 1e5) === Math.round(lastLat * 1e5) && 
-                Math.round(lng * 1e5) === Math.round(lastLng * 1e5)) {
-              continue;
+            if (p.lat !== undefined && p.lng !== undefined) {
+              lat = p.lat;
+              lng = p.lng;
+            } else {
+              const latE7 = p.latE7 ?? p.latitudeE7;
+              const lngE7 = p.lngE7 ?? p.longitudeE7;
+              if (latE7 === undefined || lngE7 === undefined) continue;
+              lat = latE7 / 1e7;
+              lng = lngE7 / 1e7;
             }
+            
+            lat = Math.round(lat * 1e7) / 1e7;
+            lng = Math.round(lng * 1e7) / 1e7;
 
             let timestampValue: number = 0;
             if (p.timestampMs) {
@@ -150,16 +257,17 @@ export class DatabaseService {
 
             await this.sqlite3.step(stmt);
             this.sqlite3.reset(stmt);
-
-            lastLat = lat;
-            lastLng = lng;
-            insertedCount++;
           }
           break; 
         }
 
         await this.sqlite3.exec(this.db, 'COMMIT');
-        console.log(`DatabaseService: Successfully imported ${insertedCount} points`);
+        
+        let finalCount = 0;
+        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
+          finalCount = row[0];
+        });
+        console.log(`DatabaseService: Import finished. Total unique points in DB: ${finalCount}`);
       } catch (e) {
         console.error("DatabaseService: Error during import", e);
         try {
@@ -171,7 +279,6 @@ export class DatabaseService {
   }
 
   async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number): Promise<{lat: number, lng: number}[]> {
-    // Only query if DB is ready, otherwise return empty
     if (!this.db) return [];
 
     return this.withLock(async () => {

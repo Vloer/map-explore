@@ -26,7 +26,8 @@ function App() {
               type: 'raster',
               tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
               tileSize: 256,
-              attribution: '&copy; OpenStreetMap Contributors'
+              attribution: '&copy; OpenStreetMap Contributors',
+              maxzoom: 19
             }
           },
           layers: [
@@ -37,10 +38,12 @@ function App() {
             }
           ]
         },
-        center: [4.895168, 52.370216], // Amsterdam
-        zoom: 12,
+        center: [5.2561, 51.3697], // Hapert, Netherlands
+        zoom: 14,
+        maxZoom: 19,
         attributionControl: true
       });
+      console.log("App: Map initialized with center [5.2561, 51.3697]");
 
       map.current.addControl(new maplibregl.NavigationControl());
 
@@ -50,6 +53,7 @@ function App() {
 
       map.current.on('load', async () => {
         console.log("App: Map loaded");
+        map.current?.setCenter([5.2561, 51.3697]);
         try {
           await databaseService.init();
           console.log("App: DB initialized");
@@ -84,11 +88,11 @@ function App() {
       try {
         const text = e.target?.result as string;
         console.log("File read successfully, size:", text.length);
-        
+
         setImportStatus('Parsing JSON...');
         const data = JSON.parse(text);
         console.log("JSON parsed. Top level keys:", Object.keys(data));
-        
+
         if (data.timelineEdits) {
           console.log("Found timelineEdits, count:", data.timelineEdits.length);
         }
@@ -98,9 +102,9 @@ function App() {
 
         setImportStatus(`Importing data...`);
         await databaseService.importGoogleHistory(data);
-        
+
         setImportStatus('Import complete!');
-        fogLayer.current?.draw();
+        fogLayer.current?.refreshData();
       } catch (err) {
         console.error("Import error details:", err);
         setImportStatus('Error importing data. Check console.');
@@ -122,15 +126,15 @@ function App() {
       <div id="map" ref={mapContainer} style={{ flexGrow: 1, height: '100%', width: '100%' }} />
       <div id="controls">
         <h3 style={{ margin: '0 0 10px 0' }}>World Fog of War</h3>
-        <input 
-          type="file" 
-          accept=".json" 
+        <input
+          type="file"
+          accept=".json"
           ref={fileInputRef}
-          onChange={handleFileUpload} 
+          onChange={handleFileUpload}
           style={{ display: 'none' }}
         />
-        <button 
-          onClick={onButtonClick} 
+        <button
+          onClick={onButtonClick}
           disabled={loading}
           style={{
             padding: '10px 20px',

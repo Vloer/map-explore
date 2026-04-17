@@ -8,10 +8,13 @@ export class FogLayer {
   private db: DatabaseService;
   private resizeObserver: ResizeObserver;
   private points: {lat: number, lng: number}[] = [];
-  private lastFetchBounds: maplibregl.LngLatBounds | null = null;
   private isDrawing = false;
 
+  // Configurable radius in meters
+  public meterRadius: number = 20;
+
   constructor(map: maplibregl.Map, db: DatabaseService) {
+    console.log("FogLayer: Constructor started");
     this.map = map;
     this.db = db;
 
@@ -21,7 +24,7 @@ export class FogLayer {
     this.canvas.style.left = '0';
     this.canvas.style.pointerEvents = 'none';
     this.canvas.style.zIndex = '1';
-    
+
     const container = map.getContainer();
     container.appendChild(this.canvas);
 
@@ -31,7 +34,6 @@ export class FogLayer {
 
     this.resizeCanvas();
 
-    // GEMINI.md: canvas sync on viewreset, movestart, moveend
     this.map.on('move', () => this.scheduleDraw());
     this.map.on('moveend', () => this.refreshData());
     this.map.on('zoomend', () => this.refreshData());
@@ -50,20 +52,20 @@ export class FogLayer {
     const container = this.map.getContainer();
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    
+
     this.canvas.width = rect.width * dpr;
     this.canvas.height = rect.height * dpr;
     this.canvas.style.width = `${rect.width}px`;
     this.canvas.style.height = `${rect.height}px`;
-    
+
     this.ctx.scale(dpr, dpr);
   }
 
-  private async refreshData() {
+  public async refreshData() {
     const bounds = this.map.getBounds();
-    
-    // Expand bounds slightly to avoid flickering at edges
-    const buffer = 0.1; // 10% buffer
+
+    // Expand bounds slightly to avoid flickering
+    const buffer = 0.1;
     const latBuffer = (bounds.getNorth() - bounds.getSouth()) * buffer;
     const lngBuffer = (bounds.getEast() - bounds.getWest()) * buffer;
 
@@ -73,8 +75,7 @@ export class FogLayer {
       bounds.getWest() - lngBuffer,
       bounds.getEast() + lngBuffer
     );
-    
-    this.lastFetchBounds = bounds;
+
     this.scheduleDraw();
   }
 
@@ -87,37 +88,68 @@ export class FogLayer {
     });
   }
 
+  private getPixelsPerMeter(lat: number, zoom: number): number {
+    // Standard Mercator scale calculation
+    const metersPerPixel = (Math.cos(lat * Math.PI / 180) * 2 * Math.PI * 6378137) / (256 * Math.pow(2, zoom));
+    return 1 / metersPerPixel;
+  }
+
   public draw() {
     const { width, height } = this.canvas.getBoundingClientRect();
-    
+    const zoom = this.map.getZoom();
+    const center = this.map.getCenter();
+
     // 1. Fill with fog
     this.ctx.globalCompositeOperation = 'source-over';
     this.ctx.clearRect(0, 0, width, height);
-    this.ctx.fillStyle = 'rgba(15, 15, 20, 0.75)'; // Dark, moody fog
+    this.ctx.fillStyle = 'rgba(15, 15, 20, 0.75)';
     this.ctx.fillRect(0, 0, width, height);
+
+    if (this.points.length === 0) return;
 
     // 2. Cut out explored areas
     this.ctx.globalCompositeOperation = 'destination-out';
-    
-    const zoom = this.map.getZoom();
-    // Radius scales with zoom but has a minimum to remain visible
-    const baseRadius = 15;
-    const radius = Math.max(4, baseRadius * Math.pow(1.4, zoom - 15));
 
-    // Batch drawing for performance
+    // Calculate pixel radius based on meters
+    const pixelsPerMeter = this.getPixelsPerMeter(center.lat, zoom);
+    const radius = Math.max(3, this.meterRadius * pixelsPerMeter);
+
+    let visiblePoints = 0;
+    let drawnPoints = 0;
+
+    // Screen-space decimation: don't draw if too close to last drawn point
+    let lastX = -9999;
+    let lastY = -9999;
+    const minPixelDistSq = 4; // 2 pixels distance
+
     this.ctx.beginPath();
     for (const p of this.points) {
       const pos = this.map.project([p.lng, p.lat]);
-      
-      // Optimization: Skip if point is outside visible canvas
+
+      // Frustum culling
       if (pos.x < -radius || pos.x > width + radius || pos.y < -radius || pos.y > height + radius) {
+        continue;
+      }
+      visiblePoints++;
+
+      // Visual Decimation: Skip if this point is practically on top of the last one
+      const dx = pos.x - lastX;
+      const dy = pos.y - lastY;
+      if (dx * dx + dy * dy < minPixelDistSq) {
         continue;
       }
 
       this.ctx.moveTo(pos.x + radius, pos.y);
       this.ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+
+      lastX = pos.x;
+      lastY = pos.y;
+      drawnPoints++;
     }
     this.ctx.fill();
+
+    // Optional: Log reduction
+    // console.log(`FogLayer: Visible=${visiblePoints}, Drawn=${drawnPoints} (Radius=${radius.toFixed(1)}px)`);
   }
 
   public destroy() {
