@@ -94,7 +94,10 @@ export class HeatmapLayer {
   }
 
   private getHue(visits: number): number {
-    const ratio = Math.min(visits / this.maxVisits, 1);
+    // Coloring starts at 2. Scale it from 2 to maxVisits.
+    const effectiveVisits = Math.max(0, visits - 2);
+    const effectiveMax = Math.max(1, this.maxVisits - 2);
+    const ratio = Math.min(effectiveVisits / effectiveMax, 1);
     // HSL: 120 (Green) to 0 (Red)
     return 120 * (1 - ratio);
   }
@@ -115,6 +118,9 @@ export class HeatmapLayer {
     this.ctx.globalCompositeOperation = 'screen';
 
     for (const p of this.points) {
+      // Per user request: visits (1) should not have a color at all.
+      if (p.visits < 2) continue;
+
       const pos = this.map.project([p.lng, p.lat]);
       if (pos.x < -radius || pos.x > width + radius || pos.y < -radius || pos.y > height + radius) {
         continue;

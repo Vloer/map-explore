@@ -36,6 +36,11 @@ export interface TimelineData {
   }>;
 }
 
+export interface ImportOptions {
+  includeRawSignals: boolean;
+  includeSemanticSegments: boolean;
+}
+
 export class DatabaseService {
   private sqlite3: any;
   private db: number | null = null;
@@ -79,7 +84,6 @@ export class DatabaseService {
   private async createTable() {
     if (!this.db) return;
 
-    // Check if we need to migrate to the new trigger-based deduplication schema
     let needsReset = false;
     await this.sqlite3.exec(this.db, "SELECT name FROM sqlite_master WHERE type='table' AND name='signals'", (row: any[]) => {
       if (!row[0]) needsReset = true;
@@ -92,7 +96,6 @@ export class DatabaseService {
     }
 
     await this.sqlite3.exec(this.db, `
-      -- 1. Raw signals table to prevent duplicate signal imports
       CREATE TABLE IF NOT EXISTS signals (
         lat_e7 INTEGER,
         lng_e7 INTEGER,
@@ -100,7 +103,6 @@ export class DatabaseService {
         PRIMARY KEY (lat_e7, lng_e7, timestamp)
       );
 
-      -- 2. Aggregated locations table for fast map rendering
       CREATE TABLE IF NOT EXISTS locations (
         lat_e7 INTEGER,
         lng_e7 INTEGER,
@@ -109,7 +111,6 @@ export class DatabaseService {
         PRIMARY KEY (lat_e7, lng_e7)
       );
 
-      -- 3. Trigger to keep locations aggregated whenever a new unique signal is added
       CREATE TRIGGER IF NOT EXISTS ai_signals AFTER INSERT ON signals BEGIN
         INSERT INTO locations (lat_e7, lng_e7, visit_count, latest_timestamp)
         VALUES (new.lat_e7, new.lng_e7, 1, new.timestamp)
@@ -149,14 +150,14 @@ export class DatabaseService {
     return Math.round(val / s) * s;
   }
 
-  async importGoogleHistory(data: TimelineData) {
+  async importGoogleHistory(data: TimelineData, options: ImportOptions = { includeRawSignals: true, includeSemanticSegments: true }) {
     return this.withLock(async () => {
-      console.log("DatabaseService: Starting deduplicated import...");
+      console.log(`DatabaseService: Starting import (Raw: ${options.includeRawSignals}, Semantic: ${options.includeSemanticSegments})...`);
       if (!this.db) throw new Error("Database not initialized");
 
       const points: LocationPoint[] = [];
 
-      if (data.rawSignals) {
+      if (options.includeRawSignals && data.rawSignals) {
         for (const signal of data.rawSignals) {
           if (signal.position?.LatLng && signal.position.timestamp) {
             const coords = this.parseLatLngToE7(signal.position.LatLng);
@@ -171,7 +172,7 @@ export class DatabaseService {
         }
       }
 
-      if (data.semanticSegments) {
+      if (options.includeSemanticSegments && data.semanticSegments) {
         for (const segment of data.semanticSegments) {
           if (segment.timelinePath) {
             for (const tp of segment.timelinePath) {
@@ -189,7 +190,10 @@ export class DatabaseService {
         }
       }
 
-      if (points.length === 0) return;
+      if (points.length === 0) {
+        console.warn("DatabaseService: No points found for import with current options.");
+        return;
+      }
 
       await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
 
@@ -224,7 +228,6 @@ export class DatabaseService {
         });
         console.log(`DatabaseService: Import complete. Unique grid cells: ${finalLocationCount}`);
         
-        // Reclaim space if many duplicates were ignored
         await this.sqlite3.exec(this.db, 'VACUUM');
       } catch (e) {
         console.error("DatabaseService: Import error", e);

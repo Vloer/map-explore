@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { databaseService } from './DatabaseService';
+import type { ImportOptions } from './DatabaseService';
 import { FogLayer } from './FogLayer';
 import { HeatmapLayer } from './HeatmapLayer';
 import { APP_CONFIG } from './Config';
@@ -11,13 +12,17 @@ function App() {
   const map = useRef<maplibregl.Map | null>(null);
   const fogLayer = useRef<FogLayer | null>(null);
   const heatmapLayer = useRef<HeatmapLayer | null>(null);
-  
+
   const [loading, setLoading] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [fogRadius, setFogRadius] = useState(APP_CONFIG.BASE_FOG_REVEAL_RADIUS);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [heatmapStrength, setHeatmapStrength] = useState(Math.floor(APP_CONFIG.HEATMAP_MAX_VISITS / 2));
   const [tooltip, setTooltip] = useState<{ x: number, y: number, text: string } | null>(null);
+
+  // State for import choice modal
+  const [pendingData, setPendingData] = useState<any | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
 
   useEffect(() => {
     if (map.current) return;
@@ -39,7 +44,7 @@ function App() {
           },
           layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
         },
-        center: APP_CONFIG.MAP_INITIAL_CENTER, 
+        center: APP_CONFIG.MAP_INITIAL_CENTER,
         zoom: APP_CONFIG.MAP_INITIAL_ZOOM,
         maxZoom: APP_CONFIG.MAP_MAX_ZOOM,
         attributionControl: true
@@ -49,13 +54,13 @@ function App() {
 
       map.current.on('mousemove', async (e) => {
         if (!map.current) return;
-        const radius = APP_CONFIG.HOVER_RADIUS_DEGREES; 
+        const radius = APP_CONFIG.HOVER_RADIUS_DEGREES;
         const nearest = await databaseService.getNearestPoint(e.lngLat.lat, e.lngLat.lng, radius);
         if (nearest) {
           const date = new Date(nearest.timestamp);
-          const timeStr = date.toLocaleString([], { 
-            year: 'numeric', month: '2-digit', day: '2-digit', 
-            hour: '2-digit', minute: '2-digit' 
+          const timeStr = date.toLocaleString([], {
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit'
           });
           setTooltip({
             x: e.point.x,
@@ -92,9 +97,10 @@ function App() {
     };
   }, []);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
     setLoading(true);
     setImportStatus('Reading file...');
     const reader = new FileReader();
@@ -102,18 +108,38 @@ function App() {
       try {
         const text = e.target?.result as string;
         const data = JSON.parse(text);
-        setImportStatus(`Importing data...`);
-        await databaseService.importGoogleHistory(data);
-        setImportStatus('Import complete!');
-        fogLayer.current?.refreshData();
-        if (heatmapEnabled) heatmapLayer.current?.refreshData();
+        setPendingData(data);
+        setShowImportModal(true);
+        setImportStatus('Awaiting your choice...');
       } catch (err) {
-        setImportStatus('Error importing data.');
-      } finally {
+        console.error("Parse error:", err);
+        setImportStatus('Error parsing JSON.');
         setLoading(false);
       }
     };
     reader.readAsText(file);
+    // Reset input so same file can be selected again
+    event.target.value = '';
+  };
+
+  const startImport = async (options: ImportOptions) => {
+    if (!pendingData) return;
+    setShowImportModal(false);
+    setLoading(true);
+    setImportStatus(`Importing data...`);
+
+    try {
+      await databaseService.importGoogleHistory(pendingData, options);
+      setImportStatus('Import complete!');
+      setPendingData(null);
+      fogLayer.current?.refreshData();
+      if (heatmapEnabled) heatmapLayer.current?.refreshData();
+    } catch (err) {
+      console.error("Import error:", err);
+      setImportStatus('Error importing data.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRadiusChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -166,7 +192,7 @@ function App() {
   return (
     <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', backgroundColor: '#1a1a1a', position: 'relative' }}>
       <div id="map" ref={mapContainer} style={{ flexGrow: 1, height: '100%', width: '100%' }} />
-      
+
       {tooltip && (
         <div style={{
           position: 'absolute',
@@ -199,38 +225,89 @@ function App() {
           width: '150px'
         }}>
           <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '8px', textAlign: 'center' }}>Visits</div>
-          <div style={{ 
-            height: '10px', 
-            width: '100%', 
-            background: 'linear-gradient(to right, #00ff00, #ffff00, #ff0000)', 
+          <div style={{
+            height: '10px',
+            width: '100%',
+            background: 'linear-gradient(to right, #00ff00, #ffff00, #ff0000)',
             borderRadius: '5px',
             marginBottom: '4px'
           }} />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
-            <span>1</span>
+            <span>2</span>
             <span>{Math.round(heatmapStrength / 2)}</span>
             <span>{heatmapStrength}+</span>
           </div>
         </div>
       )}
 
-      <div id="controls" style={{ 
-        position: 'absolute', bottom: '20px', left: '20px', zIndex: 20, 
-        background: 'white', padding: '15px', borderRadius: '8px', 
-        boxShadow: '0 2px 10px rgba(0,0,0,0.2)', width: '250px' 
+      {showImportModal && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white', padding: '25px', borderRadius: '12px',
+            maxWidth: '400px', width: '90%', boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+          }}>
+            <h3 style={{ margin: '0 0 15px 0' }}>Import Options</h3>
+            <p style={{ fontSize: '14px', color: '#444', marginBottom: '20px' }}>
+              How much detail do you want to import from your timeline?
+            </p>
+
+            <button
+              onClick={() => startImport({ includeRawSignals: true, includeSemanticSegments: true })}
+              style={{
+                width: '100%', padding: '12px', marginBottom: '10px',
+                backgroundColor: '#4CAF50', color: 'white', border: 'none',
+                borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'
+              }}
+            >
+              Full Detail (Raw Signals + Semantic)
+            </button>
+
+            <button
+              onClick={() => startImport({ includeRawSignals: false, includeSemanticSegments: true })}
+              style={{
+                width: '100%', padding: '12px', marginBottom: '15px',
+                backgroundColor: '#2196F3', color: 'white', border: 'none',
+                borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'
+              }}
+            >
+              Semantic Segments Only (Cleaner)
+            </button>
+
+            <button
+              onClick={() => { setShowImportModal(false); setLoading(false); setImportStatus(''); }}
+              style={{
+                width: '100%', padding: '8px',
+                backgroundColor: 'transparent', color: '#666', border: 'none',
+                cursor: 'pointer', fontSize: '13px'
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div id="controls" style={{
+        position: 'absolute', bottom: '20px', left: '20px', zIndex: 20,
+        background: 'white', padding: '15px', borderRadius: '8px',
+        boxShadow: '0 2px 10px rgba(0,0,0,0.2)', width: '250px'
       }}>
         <h3 style={{ margin: '0 0 15px 0', fontSize: '18px' }}>World Fog of War</h3>
-        
+
         <div style={{ marginBottom: '15px' }}>
           <label style={{ fontSize: '14px', display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
             Radius: {fogRadius}m
           </label>
-          <input 
-            type="range" 
-            min={APP_CONFIG.MIN_FOG_REVEAL_RADIUS} 
-            max={APP_CONFIG.MAX_FOG_REVEAL_RADIUS} 
+          <input
+            type="range"
+            min={APP_CONFIG.MIN_FOG_REVEAL_RADIUS}
+            max={APP_CONFIG.MAX_FOG_REVEAL_RADIUS}
             step={APP_CONFIG.RADIUS_SLIDER_STEP}
-            value={fogRadius} 
+            value={fogRadius}
             onChange={handleRadiusChange}
             style={{ width: '100%', cursor: 'pointer' }}
           />
@@ -241,12 +318,12 @@ function App() {
             <label style={{ fontSize: '14px', display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
               Heatmap sensitivity: {heatmapStrength}{heatmapStrength === APP_CONFIG.HEATMAP_MAX_VISITS ? "+" : ""}
             </label>
-            <input 
-              type="range" 
-              min="1" 
-              max={APP_CONFIG.HEATMAP_MAX_VISITS} 
+            <input
+              type="range"
+              min="1"
+              max={APP_CONFIG.HEATMAP_MAX_VISITS}
               step="1"
-              value={heatmapStrength} 
+              value={heatmapStrength}
               onChange={handleHeatmapStrengthChange}
               style={{ width: '100%', cursor: 'pointer' }}
             />
@@ -275,7 +352,7 @@ function App() {
           type="file"
           accept=".json"
           ref={fileInputRef}
-          onChange={handleFileUpload}
+          onChange={handleFileSelect}
           style={{ display: 'none' }}
         />
         <button
@@ -294,7 +371,7 @@ function App() {
             marginBottom: '10px'
           }}
         >
-          {loading ? 'Processing...' : 'Upload Google Takeout JSON'}
+          {loading ? 'Processing...' : 'Upload Google location data'}
         </button>
 
         <button
