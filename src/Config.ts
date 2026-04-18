@@ -2,11 +2,38 @@
  * Configuration for World Fog of War
  */
 export const APP_CONFIG = {
-  // The visual radius shown on the map (in meters)
-  FOG_RADIUS_METERS: 25,
+  // Map settings
+  MAP_INITIAL_CENTER: [5.2561, 51.3697] as [number, number],
+  MAP_INITIAL_ZOOM: 14,
+  MAP_MAX_ZOOM: 19,
+  MAP_STYLE: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
 
-  // The snapping grid size (in meters).
-  // Points closer than this will be aggregated into one database entry.
-  // Ideally should be close to or slightly smaller than FOG_RADIUS_METERS.
+  // Reveal radius settings (meters)
+  BASE_FOG_REVEAL_RADIUS: 25,
+  MAX_FOG_REVEAL_RADIUS: 150,
+  MIN_FOG_REVEAL_RADIUS: 5,
+  RADIUS_SLIDER_STEP: 5,
+
+  // Snapping / Grid settings (meters)
   DETAIL_RADIUS_METERS: 20,
+
+  // Heatmap settings
+  HEATMAP_MAX_VISITS: 50,
+  HEATMAP_RADIUS_MULTIPLIER: 1.5,
+  HEATMAP_OPACITY: 0.45,
+  
+  // Fog settings
+  FOG_OPACITY: 0.75,
+  FOG_COLOR: 'rgba(15, 15, 20, 0.75)',
+
+  // Interaction settings
+  HOVER_RADIUS_DEGREES: 0.0002,
+  TOOLTIP_OFFSET: 15,
+
+  // Constants
+  METERS_PER_DEGREE: 111111,
+  EARTH_RADIUS_METERS: 6378137,
+  TILE_SIZE: 256,
+  SQLITE_PAGE_SIZE: 8192,
+  NEAREST_QUERY_LIMIT: 200,
 };

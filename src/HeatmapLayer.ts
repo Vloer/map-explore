@@ -2,19 +2,20 @@ import maplibregl from 'maplibre-gl';
 import { DatabaseService } from './DatabaseService';
 import { APP_CONFIG } from './Config';
 
-export class FogLayer {
+export class HeatmapLayer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private map: maplibregl.Map;
   private db: DatabaseService;
   private resizeObserver: ResizeObserver;
-  private points: {lat: number, lng: number}[] = [];
+  private points: {lat: number, lng: number, visits: number}[] = [];
   private isDrawing = false;
+  private enabled = false;
   
-  public meterRadius: number = APP_CONFIG.BASE_FOG_REVEAL_RADIUS; 
+  public meterRadius: number = APP_CONFIG.BASE_FOG_REVEAL_RADIUS;
+  public maxVisits: number = APP_CONFIG.HEATMAP_MAX_VISITS; 
 
   constructor(map: maplibregl.Map, db: DatabaseService) {
-    console.log("FogLayer: Constructor started");
     this.map = map;
     this.db = db;
 
@@ -23,7 +24,8 @@ export class FogLayer {
     this.canvas.style.top = '0';
     this.canvas.style.left = '0';
     this.canvas.style.pointerEvents = 'none';
-    this.canvas.style.zIndex = '1';
+    this.canvas.style.zIndex = '2'; 
+    this.canvas.style.display = 'none';
     
     const container = map.getContainer();
     container.appendChild(this.canvas);
@@ -44,26 +46,30 @@ export class FogLayer {
       this.refreshData();
     });
     this.resizeObserver.observe(container);
+  }
 
-    this.refreshData();
+  public setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    this.canvas.style.display = enabled ? 'block' : 'none';
+    if (enabled) {
+      this.refreshData();
+    }
   }
 
   private resizeCanvas() {
     const container = this.map.getContainer();
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    
     this.canvas.width = rect.width * dpr;
     this.canvas.height = rect.height * dpr;
     this.canvas.style.width = `${rect.width}px`;
     this.canvas.style.height = `${rect.height}px`;
-    
     this.ctx.scale(dpr, dpr);
   }
 
   public async refreshData() {
+    if (!this.enabled) return;
     const bounds = this.map.getBounds();
-    
     const buffer = 0.1; 
     const latBuffer = (bounds.getNorth() - bounds.getSouth()) * buffer;
     const lngBuffer = (bounds.getEast() - bounds.getWest()) * buffer;
@@ -79,7 +85,7 @@ export class FogLayer {
   }
 
   private scheduleDraw() {
-    if (this.isDrawing) return;
+    if (!this.enabled || this.isDrawing) return;
     this.isDrawing = true;
     requestAnimationFrame(() => {
       this.draw();
@@ -87,58 +93,46 @@ export class FogLayer {
     });
   }
 
-  private getPixelsPerMeter(lat: number, zoom: number): number {
-    const metersPerPixel = (Math.cos(lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
-    return 1 / metersPerPixel;
+  private getHue(visits: number): number {
+    const ratio = Math.min(visits / this.maxVisits, 1);
+    // HSL: 120 (Green) to 0 (Red)
+    return 120 * (1 - ratio);
   }
 
   public draw() {
+    if (!this.enabled) return;
     const { width, height } = this.canvas.getBoundingClientRect();
-    const zoom = this.map.getZoom();
-    const center = this.map.getCenter();
-    
-    this.ctx.globalCompositeOperation = 'source-over';
     this.ctx.clearRect(0, 0, width, height);
-    this.ctx.fillStyle = APP_CONFIG.FOG_COLOR; 
-    this.ctx.fillRect(0, 0, width, height);
 
-    if (this.points.length === 0) return;
-
-    this.ctx.globalCompositeOperation = 'destination-out';
+    const zoom = this.map.getZoom();
+    const lat = this.map.getCenter().lat;
+    const metersPerPixel = (Math.cos(lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
+    const pixelsPerMeter = 1 / metersPerPixel;
     
-    const pixelsPerMeter = this.getPixelsPerMeter(center.lat, zoom);
-    const radius = Math.max(3, this.meterRadius * pixelsPerMeter);
+    const radius = Math.max(5, (this.meterRadius * APP_CONFIG.HEATMAP_RADIUS_MULTIPLIER) * pixelsPerMeter);
 
-    let visiblePoints = 0;
-    let drawnPoints = 0;
-    
-    let lastX = -9999;
-    let lastY = -9999;
-    const minPixelDistSq = 4; // 2 pixels distance
+    this.ctx.globalAlpha = APP_CONFIG.HEATMAP_OPACITY;
+    this.ctx.globalCompositeOperation = 'screen';
 
-    this.ctx.beginPath();
     for (const p of this.points) {
       const pos = this.map.project([p.lng, p.lat]);
-      
       if (pos.x < -radius || pos.x > width + radius || pos.y < -radius || pos.y > height + radius) {
         continue;
       }
-      visiblePoints++;
 
-      const dx = pos.x - lastX;
-      const dy = pos.y - lastY;
-      if (dx * dx + dy * dy < minPixelDistSq) {
-        continue;
-      }
-
-      this.ctx.moveTo(pos.x + radius, pos.y);
-      this.ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+      const hue = this.getHue(p.visits);
+      const gradient = this.ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, radius);
       
-      lastX = pos.x;
-      lastY = pos.y;
-      drawnPoints++;
+      gradient.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.8)`);
+      gradient.addColorStop(0.3, `hsla(${hue}, 100%, 50%, 0.4)`);
+      gradient.addColorStop(1, `hsla(${hue}, 100%, 50%, 0)`);
+
+      this.ctx.fillStyle = gradient;
+      this.ctx.fillRect(pos.x - radius, pos.y - radius, radius * 2, radius * 2);
     }
-    this.ctx.fill();
+
+    this.ctx.globalAlpha = 1.0;
+    this.ctx.globalCompositeOperation = 'source-over';
   }
 
   public destroy() {

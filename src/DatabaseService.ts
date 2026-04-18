@@ -33,10 +33,6 @@ export interface TimelineData {
         }
       }
     };
-    activity?: {
-      start?: { latLng?: string };
-      end?: { latLng?: string };
-    }
   }>;
 }
 
@@ -71,7 +67,7 @@ export class DatabaseService {
       this.db = await this.sqlite3.open_v2('world_fog_of_war', SQLite.SQLITE_OPEN_READWRITE | SQLite.SQLITE_OPEN_CREATE, 'idb-batch');
 
       await this.sqlite3.exec(this.db, `
-        PRAGMA page_size = 8192;
+        PRAGMA page_size = ${APP_CONFIG.SQLITE_PAGE_SIZE};
         PRAGMA journal_mode = MEMORY;
         PRAGMA synchronous = NORMAL;
       `);
@@ -83,18 +79,53 @@ export class DatabaseService {
   private async createTable() {
     if (!this.db) return;
 
-    // Primary Key uniqueness remains the same, but the data resolution
-    // is controlled by the snap value during import.
+    // Check if we need to migrate to the new trigger-based deduplication schema
+    let needsReset = false;
+    await this.sqlite3.exec(this.db, "SELECT name FROM sqlite_master WHERE type='table' AND name='signals'", (row: any[]) => {
+      if (!row[0]) needsReset = true;
+    });
+
+    if (needsReset) {
+      console.log("DatabaseService: Resetting database for new deduplication schema.");
+      await this.sqlite3.exec(this.db, "DROP TABLE IF EXISTS locations;");
+      await this.sqlite3.exec(this.db, "DROP TABLE IF EXISTS signals;");
+    }
+
     await this.sqlite3.exec(this.db, `
+      -- 1. Raw signals table to prevent duplicate signal imports
+      CREATE TABLE IF NOT EXISTS signals (
+        lat_e7 INTEGER,
+        lng_e7 INTEGER,
+        timestamp INTEGER,
+        PRIMARY KEY (lat_e7, lng_e7, timestamp)
+      );
+
+      -- 2. Aggregated locations table for fast map rendering
       CREATE TABLE IF NOT EXISTS locations (
         lat_e7 INTEGER,
         lng_e7 INTEGER,
-        visit_count INTEGER DEFAULT 1,
+        visit_count INTEGER DEFAULT 0,
         latest_timestamp INTEGER,
         PRIMARY KEY (lat_e7, lng_e7)
       );
-      CREATE INDEX IF NOT EXISTS idx_locations_coords ON locations(lat_e7, lng_e7);
+
+      -- 3. Trigger to keep locations aggregated whenever a new unique signal is added
+      CREATE TRIGGER IF NOT EXISTS ai_signals AFTER INSERT ON signals BEGIN
+        INSERT INTO locations (lat_e7, lng_e7, visit_count, latest_timestamp)
+        VALUES (new.lat_e7, new.lng_e7, 1, new.timestamp)
+        ON CONFLICT(lat_e7, lng_e7) DO UPDATE SET
+          visit_count = visit_count + 1,
+          latest_timestamp = MAX(latest_timestamp, excluded.latest_timestamp);
+      END;
     `);
+  }
+
+  async clearDatabase() {
+    return this.withLock(async () => {
+      if (!this.db) return;
+      await this.sqlite3.exec(this.db, "DELETE FROM signals; DELETE FROM locations; VACUUM;");
+      console.log("DatabaseService: Database cleared.");
+    });
   }
 
   private parseLatLngToE7(s: string): {latE7: number, lngE7: number} | null {
@@ -120,7 +151,7 @@ export class DatabaseService {
 
   async importGoogleHistory(data: TimelineData) {
     return this.withLock(async () => {
-      console.log("DatabaseService: Starting import...");
+      console.log("DatabaseService: Starting deduplicated import...");
       if (!this.db) throw new Error("Database not initialized");
 
       const points: LocationPoint[] = [];
@@ -131,8 +162,8 @@ export class DatabaseService {
             const coords = this.parseLatLngToE7(signal.position.LatLng);
             if (coords) {
               points.push({
-                latE7: this.snap(coords.latE7),
-                lngE7: this.snap(coords.lngE7),
+                latE7: coords.latE7,
+                lngE7: coords.lngE7,
                 timestamp: signal.position.timestamp
               });
             }
@@ -146,51 +177,55 @@ export class DatabaseService {
             for (const tp of segment.timelinePath) {
               if (tp.point && tp.time) {
                 const coords = this.parseLatLngToE7(tp.point);
-                if (coords) points.push({ latE7: this.snap(coords.latE7), lngE7: this.snap(coords.lngE7), timestamp: tp.time });
+                if (coords) points.push({ latE7: coords.latE7, lngE7: coords.lngE7, timestamp: tp.time });
               }
             }
           }
           const visitLoc = segment.visit?.topCandidate?.placeLocation?.latLng;
           if (visitLoc && segment.startTime) {
             const coords = this.parseLatLngToE7(visitLoc);
-            if (coords) points.push({ latE7: this.snap(coords.latE7), lngE7: this.snap(coords.lngE7), timestamp: segment.startTime });
+            if (coords) points.push({ latE7: coords.latE7, lngE7: coords.lngE7, timestamp: segment.startTime });
           }
         }
       }
 
-      console.log(`DatabaseService: Extracted ${points.length} points. Snapping to ${this.snapE7} E7 units.`);
       if (points.length === 0) return;
 
       await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
 
       try {
-        const sql = `
-          INSERT INTO locations (lat_e7, lng_e7, visit_count, latest_timestamp)
-          VALUES (?, ?, 1, ?)
-          ON CONFLICT(lat_e7, lng_e7) DO UPDATE SET
-            visit_count = visit_count + 1,
-            latest_timestamp = MAX(latest_timestamp, excluded.latest_timestamp)
-        `;
+        let beforeSignalCount = 0;
+        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM signals', (row: any[]) => beforeSignalCount = row[0]);
 
+        const sql = `INSERT OR IGNORE INTO signals (lat_e7, lng_e7, timestamp) VALUES (?, ?, ?)`;
+        
         for await (const stmt of this.sqlite3.statements(this.db, sql)) {
           for (const p of points) {
             const ts = new Date(p.timestamp).getTime();
-            this.sqlite3.bind_int(stmt, 1, p.latE7);
-            this.sqlite3.bind_int(stmt, 2, p.lngE7);
+            this.sqlite3.bind_int(stmt, 1, this.snap(p.latE7));
+            this.sqlite3.bind_int(stmt, 2, this.snap(p.lngE7));
             this.sqlite3.bind_int64(stmt, 3, BigInt(ts));
             await this.sqlite3.step(stmt);
             this.sqlite3.reset(stmt);
           }
-          break;
+          break; 
         }
 
         await this.sqlite3.exec(this.db, 'COMMIT');
-
-        let finalCount = 0;
+        
+        let afterSignalCount = 0;
+        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM signals', (row: any[]) => afterSignalCount = row[0]);
+        
+        console.log(`DatabaseService: Signals before: ${beforeSignalCount}, after: ${afterSignalCount} (Added: ${afterSignalCount - beforeSignalCount})`);
+        
+        let finalLocationCount = 0;
         await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
-          finalCount = row[0];
+          finalLocationCount = row[0];
         });
-        console.log(`DatabaseService: Import complete. Unique grid cells: ${finalCount}`);
+        console.log(`DatabaseService: Import complete. Unique grid cells: ${finalLocationCount}`);
+        
+        // Reclaim space if many duplicates were ignored
+        await this.sqlite3.exec(this.db, 'VACUUM');
       } catch (e) {
         console.error("DatabaseService: Import error", e);
         await this.sqlite3.exec(this.db, 'ROLLBACK');
@@ -199,21 +234,21 @@ export class DatabaseService {
     });
   }
 
-  async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number): Promise<{lat: number, lng: number}[]> {
+  async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number): Promise<{lat: number, lng: number, visits: number}[]> {
     if (!this.db) return [];
 
     return this.withLock(async () => {
-      const points: {lat: number, lng: number}[] = [];
+      const points: {lat: number, lng: number, visits: number}[] = [];
       const minLatE7 = Math.round(minLat * 1e7);
       const maxLatE7 = Math.round(maxLat * 1e7);
       const minLngE7 = Math.round(minLng * 1e7);
       const maxLngE7 = Math.round(maxLng * 1e7);
 
       const sql = `
-        SELECT lat_e7, lng_e7 FROM locations
+        SELECT lat_e7, lng_e7, visit_count FROM locations 
         WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
       `;
-
+      
       try {
         for await (const stmt of this.sqlite3.statements(this.db, sql)) {
           this.sqlite3.bind_int(stmt, 1, minLatE7);
@@ -224,7 +259,8 @@ export class DatabaseService {
           while (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
             points.push({
               lat: this.sqlite3.column_int(stmt, 0) / 1e7,
-              lng: this.sqlite3.column_int(stmt, 1) / 1e7
+              lng: this.sqlite3.column_int(stmt, 1) / 1e7,
+              visits: this.sqlite3.column_int(stmt, 2)
             });
           }
         }
@@ -245,12 +281,12 @@ export class DatabaseService {
       const radE7 = Math.round(radiusDegrees * 1e7);
 
       const sql = `
-        SELECT lat_e7, lng_e7, latest_timestamp, visit_count
-        FROM locations
+        SELECT lat_e7, lng_e7, latest_timestamp, visit_count 
+        FROM locations 
         WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
-        LIMIT 200
+        LIMIT ${APP_CONFIG.NEAREST_QUERY_LIMIT}
       `;
-
+      
       try {
         for await (const stmt of this.sqlite3.statements(this.db, sql)) {
           this.sqlite3.bind_int(stmt, 1, latE7 - radE7);
@@ -264,11 +300,11 @@ export class DatabaseService {
             const pLngE7 = this.sqlite3.column_int(stmt, 1);
             const pTime = Number(this.sqlite3.column_int64(stmt, 2));
             const pVisits = this.sqlite3.column_int(stmt, 3);
-
+            
             const dLat = pLatE7 - latE7;
             const dLng = pLngE7 - lngE7;
             const distSq = dLat * dLat + dLng * dLng;
-
+            
             if (distSq < minBaseDist) {
               minBaseDist = distSq;
               nearest = { lat: pLatE7 / 1e7, lng: pLngE7 / 1e7, timestamp: pTime, visits: pVisits };
@@ -286,9 +322,6 @@ export class DatabaseService {
     if (!this.db) return;
     await this.sqlite3.exec(this.db, 'SELECT lat_e7, lng_e7, visit_count FROM locations LIMIT 5', (row: any[]) => {
       console.log("DB Sample:", row[0]/1e7, row[1]/1e7, "Visits:", row[2]);
-    });
-    await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
-      console.log("DB Total Unique Coords:", row[0]);
     });
   }
 }
