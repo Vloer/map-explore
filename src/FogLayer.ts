@@ -1,5 +1,6 @@
 import maplibregl from 'maplibre-gl';
 import { DatabaseService } from './DatabaseService';
+import { APP_CONFIG } from './Config';
 
 export class FogLayer {
   private canvas: HTMLCanvasElement;
@@ -10,9 +11,7 @@ export class FogLayer {
   private points: {lat: number, lng: number}[] = [];
   private isDrawing = false;
 
-  // Configurable radius in meters
-  public meterRadius: number = 20;
-
+  public meterRadius: number = APP_CONFIG.FOG_RADIUS_METERS;
   constructor(map: maplibregl.Map, db: DatabaseService) {
     console.log("FogLayer: Constructor started");
     this.map = map;

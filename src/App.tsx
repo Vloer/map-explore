@@ -3,6 +3,7 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { databaseService } from './DatabaseService';
 import { FogLayer } from './FogLayer';
+import { APP_CONFIG } from './Config';
 
 function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -10,7 +11,7 @@ function App() {
   const fogLayer = useRef<FogLayer | null>(null);
   const [loading, setLoading] = useState(false);
   const [importStatus, setImportStatus] = useState('');
-
+  const [fogRadius, setFogRadius] = useState(APP_CONFIG.FOG_RADIUS_METERS);
   const [tooltip, setTooltip] = useState<{ x: number, y: number, text: string } | null>(null);
 
   useEffect(() => {
@@ -45,7 +46,6 @@ function App() {
         maxZoom: 19,
         attributionControl: true
       });
-      console.log("App: Map initialized with center [5.2561, 51.3697]");
 
       map.current.addControl(new maplibregl.NavigationControl());
 
@@ -57,7 +57,6 @@ function App() {
         if (!map.current) return;
         
         // Find nearest point within current visual radius
-        // 0.0001 degrees is ~11 meters, good enough for "hovering a circle"
         const radius = 0.0002; 
         const nearest = await databaseService.getNearestPoint(e.lngLat.lat, e.lngLat.lng, radius);
         
@@ -70,7 +69,7 @@ function App() {
           setTooltip({
             x: e.point.x,
             y: e.point.y,
-            text: `${nearest.lat.toFixed(5)}, ${nearest.lng.toFixed(5)}\nLatest visit: ${timeStr}`
+            text: `${nearest.lat.toFixed(5)}, ${nearest.lng.toFixed(5)}\nLatest visit: ${timeStr}\nTotal signals: ${nearest.visits}`
           });
         } else {
           setTooltip(null);
@@ -82,7 +81,6 @@ function App() {
         map.current?.setCenter([5.2561, 51.3697]);
         try {
           await databaseService.init();
-          console.log("App: DB initialized");
           if (map.current) {
             fogLayer.current = new FogLayer(map.current, databaseService);
             console.log("App: FogLayer created");
@@ -113,22 +111,10 @@ function App() {
     reader.onload = async (e) => {
       try {
         const text = e.target?.result as string;
-        console.log("File read successfully, size:", text.length);
-
         setImportStatus('Parsing JSON...');
         const data = JSON.parse(text);
-        console.log("JSON parsed. Top level keys:", Object.keys(data));
-
-        if (data.timelineEdits) {
-          console.log("Found timelineEdits, count:", data.timelineEdits.length);
-        }
-        if (data.locations) {
-          console.log("Found locations, count:", data.locations.length);
-        }
-
         setImportStatus(`Importing data...`);
         await databaseService.importGoogleHistory(data);
-
         setImportStatus('Import complete!');
         fogLayer.current?.refreshData();
       } catch (err) {
@@ -141,11 +127,17 @@ function App() {
     reader.readAsText(file);
   };
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const onButtonClick = () => {
-    fileInputRef.current?.click();
+  const handleRadiusChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value);
+    setFogRadius(val);
+    if (fogLayer.current) {
+      fogLayer.current.meterRadius = val;
+      fogLayer.current.draw();
+    }
   };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const onButtonClick = () => fileInputRef.current?.click();
 
   return (
     <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', backgroundColor: '#1a1a1a', position: 'relative' }}>
@@ -171,8 +163,28 @@ function App() {
         </div>
       )}
 
-      <div id="controls">
-        <h3 style={{ margin: '0 0 10px 0' }}>World Fog of War</h3>
+      <div id="controls" style={{ 
+        position: 'absolute', bottom: '20px', left: '20px', zIndex: 20, 
+        background: 'white', padding: '15px', borderRadius: '8px', 
+        boxShadow: '0 2px 10px rgba(0,0,0,0.2)', width: '250px' 
+      }}>
+        <h3 style={{ margin: '0 0 15px 0', fontSize: '18px' }}>World Fog of War</h3>
+        
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ fontSize: '14px', display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+            Fog Radius: {fogRadius}m
+          </label>
+          <input 
+            type="range" 
+            min="5" 
+            max="150" 
+            step="5"
+            value={fogRadius} 
+            onChange={handleRadiusChange}
+            style={{ width: '100%', cursor: 'pointer' }}
+          />
+        </div>
+
         <input
           type="file"
           accept=".json"
@@ -184,7 +196,8 @@ function App() {
           onClick={onButtonClick}
           disabled={loading}
           style={{
-            padding: '10px 20px',
+            width: '100%',
+            padding: '10px',
             backgroundColor: loading ? '#ccc' : '#4CAF50',
             color: 'white',
             border: 'none',
@@ -196,7 +209,7 @@ function App() {
         >
           {loading ? 'Processing...' : 'Upload Google Takeout JSON'}
         </button>
-        {importStatus && <p style={{ fontSize: '12px', marginTop: '8px', color: '#666' }}>{importStatus}</p>}
+        {importStatus && <p style={{ fontSize: '12px', marginTop: '10px', color: '#666', textAlign: 'center' }}>{importStatus}</p>}
       </div>
     </div>
   );
