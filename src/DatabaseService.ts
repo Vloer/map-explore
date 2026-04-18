@@ -274,6 +274,36 @@ export class DatabaseService {
     });
   }
 
+  async getPointsCountInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number): Promise<number> {
+    if (!this.db) return 0;
+
+    return this.withLock(async () => {
+      let count = 0;
+      const minLatE7 = Math.round(minLat * 1e7);
+      const maxLatE7 = Math.round(maxLat * 1e7);
+      const minLngE7 = Math.round(minLng * 1e7);
+      const maxLngE7 = Math.round(maxLng * 1e7);
+
+      const sql = `SELECT COUNT(*) FROM locations WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?`;
+      
+      try {
+        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
+          this.sqlite3.bind_int(stmt, 1, minLatE7);
+          this.sqlite3.bind_int(stmt, 2, maxLatE7);
+          this.sqlite3.bind_int(stmt, 3, minLngE7);
+          this.sqlite3.bind_int(stmt, 4, maxLngE7);
+
+          if (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
+            count = this.sqlite3.column_int(stmt, 0);
+          }
+        }
+      } catch (e) {
+        console.error("DatabaseService: Count query error", e);
+      }
+      return count;
+    });
+  }
+
   async getNearestPoint(lat: number, lng: number, radiusDegrees: number): Promise<{lat: number, lng: number, timestamp: number, visits: number} | null> {
     if (!this.db) return null;
 

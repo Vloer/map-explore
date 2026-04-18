@@ -30,6 +30,18 @@ export const APP_CONFIG = {
   HOVER_RADIUS_DEGREES: 0.0002,
   TOOLTIP_OFFSET: 15,
 
+  // Exploration settings
+  EXPLORATION_LEVELS: {
+    COUNTRY: { minZoom: 0, maxZoom: 5, layer: 'admin-0' },
+    COUNTY: { minZoom: 5, maxZoom: 9, layer: 'admin-1' },
+    CITY: { minZoom: 9, maxZoom: 12, layer: 'place-city' },
+    VILLAGE: { minZoom: 12, maxZoom: 20, layer: 'place-village' },
+  },
+  
+  // Approximate areas in sq meters (fallback or reference)
+  // For a truly accurate calculation, we'd need a polygon-area service.
+  // We'll estimate % based on visible features for now.
+
   // Constants
   METERS_PER_DEGREE: 111111,
   EARTH_RADIUS_METERS: 6378137,
