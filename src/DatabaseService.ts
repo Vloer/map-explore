@@ -5,40 +5,12 @@ import SQLiteESMFactory from 'wa-sqlite/dist/wa-sqlite-async.mjs';
 import { IDBBatchAtomicVFS } from 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
 import { APP_CONFIG } from './Config';
 import { metersToE7 } from './Util';
+import type { LocationPoint, DetailedLocationPoint, TimelineData, ImportOptions } from './types';
 
-export interface LocationPoint {
+interface InternalLocationPoint {
   latE7: number;
   lngE7: number;
   timestamp: string;
-}
-
-export interface TimelineData {
-  rawSignals?: Array<{
-    position?: {
-      LatLng?: string;
-      timestamp?: string;
-    };
-  }>;
-  semanticSegments?: Array<{
-    startTime?: string;
-    endTime?: string;
-    timelinePath?: Array<{
-      point?: string;
-      time?: string;
-    }>;
-    visit?: {
-      topCandidate?: {
-        placeLocation?: {
-          latLng?: string;
-        }
-      }
-    };
-  }>;
-}
-
-export interface ImportOptions {
-  includeRawSignals: boolean;
-  includeSemanticSegments: boolean;
 }
 
 export class DatabaseService {
@@ -155,7 +127,7 @@ export class DatabaseService {
       console.log(`DatabaseService: Starting import (Raw: ${options.includeRawSignals}, Semantic: ${options.includeSemanticSegments})...`);
       if (!this.db) throw new Error("Database not initialized");
 
-      const points: LocationPoint[] = [];
+      const points: InternalLocationPoint[] = [];
 
       if (options.includeRawSignals && data.rawSignals) {
         for (const signal of data.rawSignals) {

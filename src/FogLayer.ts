@@ -1,6 +1,7 @@
 import maplibregl from 'maplibre-gl';
 import { DatabaseService } from './DatabaseService';
 import { APP_CONFIG } from './Config';
+import type { LocationPoint } from './types';
 
 export class FogLayer {
   private canvas: HTMLCanvasElement;
@@ -8,7 +9,7 @@ export class FogLayer {
   private map: maplibregl.Map;
   private db: DatabaseService;
   private resizeObserver: ResizeObserver;
-  private points: {lat: number, lng: number}[] = [];
+  private points: LocationPoint[] = [];
   private isDrawing = false;
   
   public meterRadius: number = APP_CONFIG.BASE_FOG_REVEAL_RADIUS; 
