@@ -2,6 +2,11 @@ interface HeatmapLegendProps {
   heatmapStrength: number;
 }
 
+/**
+ * Visual legend for the heatmap, showing the color scale corresponding to visit frequency.
+ * 
+ * @param props Component properties containing heatmap sensitivity/strength.
+ */
 export function HeatmapLegend({ heatmapStrength }: HeatmapLegendProps) {
   return (
     <div style={{

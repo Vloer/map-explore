@@ -1,8 +1,13 @@
 import maplibregl from 'maplibre-gl';
 import { DatabaseService } from './services/DatabaseService';
 import { APP_CONFIG } from './Config';
+import { getPixelsPerMeter } from './Util';
 import type { LocationPoint } from './types';
 
+/**
+ * Manages the heatmap canvas overlay on the map.
+ * This layer renders a heatmap showing the frequency of visits to different locations.
+ */
 export class HeatmapLayer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -13,26 +18,34 @@ export class HeatmapLayer {
   private isDrawing = false;
   private enabled = false;
   
+  /** The radius in meters for each heatmap point. */
   public meterRadius: number = APP_CONFIG.BASE_FOG_REVEAL_RADIUS;
-  public maxVisits: number = APP_CONFIG.HEATMAP_MAX_VISITS; 
+  /** The maximum number of visits to scale the heatmap colors. */
+  public maxVisits: number = APP_CONFIG.HEATMAP_MAX_VISITS;
 
+  /**
+   * Creates an instance of HeatmapLayer.
+   * @param {maplibregl.Map} map The MapLibre map instance.
+   * @param {DatabaseService} db The database service for retrieving location points.
+   */
   constructor(map: maplibregl.Map, db: DatabaseService) {
     this.map = map;
     this.db = db;
 
     this.canvas = document.createElement('canvas');
-    this.canvas.style.position = 'absolute';
-    this.canvas.style.top = '0';
-    this.canvas.style.left = '0';
-    this.canvas.style.pointerEvents = 'none';
-    this.canvas.style.zIndex = '2'; 
-    this.canvas.style.display = 'none';
+    Object.assign(this.canvas.style, {
+      position: 'absolute',
+      top: '0',
+      left: '0',
+      pointerEvents: 'none',
+      zIndex: '2'
+    });
     
     const container = map.getContainer();
     container.appendChild(this.canvas);
 
     const ctx = this.canvas.getContext('2d', { alpha: true });
-    if (!ctx) throw new Error('Could not get canvas context');
+    if (!ctx) throw new Error('Could not get heatmap canvas context');
     this.ctx = ctx;
 
     this.resizeCanvas();
@@ -49,27 +62,39 @@ export class HeatmapLayer {
     this.resizeObserver.observe(container);
   }
 
-  public setEnabled(enabled: boolean) {
-    this.enabled = enabled;
-    this.canvas.style.display = enabled ? 'block' : 'none';
-    if (enabled) {
-      this.refreshData();
-    }
-  }
-
+  /**
+   * Resizes the canvas to match the map container size and handles High DPI screens.
+   * @private
+   */
   private resizeCanvas() {
     const container = this.map.getContainer();
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
+    
     this.canvas.width = rect.width * dpr;
     this.canvas.height = rect.height * dpr;
     this.canvas.style.width = `${rect.width}px`;
     this.canvas.style.height = `${rect.height}px`;
+    
     this.ctx.scale(dpr, dpr);
+  }
+
+  /**
+   * Enables or disables the heatmap layer.
+   * @param {boolean} enabled Whether the heatmap should be enabled.
+   */
+  public setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    this.canvas.style.display = enabled ? 'block' : 'none';
+    if (enabled) this.refreshData();
   }
 
   private detailMeters: number = 0;
 
+  /**
+   * Refreshes the location points from the database based on the current map view.
+   * @returns {Promise<void>}
+   */
   public async refreshData() {
     if (!this.enabled) return;
     const start = performance.now();
@@ -77,11 +102,10 @@ export class HeatmapLayer {
     const zoom = this.map.getZoom();
     const center = this.map.getCenter();
     
-    // Calculate detail level: we want roughly 2 pixels of detail
-    const metersPerPixel = (Math.cos(center.lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
-    this.detailMeters = metersPerPixel * 2;
+    const pixelsPerMeter = getPixelsPerMeter(center.lat, zoom);
+    this.detailMeters = 2 / pixelsPerMeter;
 
-    const buffer = 0.1; 
+    const buffer = APP_CONFIG.RENDER_BUFFER_RATIO; 
     const latBuffer = (bounds.getNorth() - bounds.getSouth()) * buffer;
     const lngBuffer = (bounds.getEast() - bounds.getWest()) * buffer;
 
@@ -93,10 +117,14 @@ export class HeatmapLayer {
       this.detailMeters
     );
     
-    console.log(`HeatmapLayer: Refreshed data. Points in buffer: ${this.points.length} (Detail: ${this.detailMeters.toFixed(1)}m, ${(performance.now() - start).toFixed(2)}ms)`);
+    console.debug(`HeatmapLayer: Refreshed data. Points: ${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);
     this.scheduleDraw();
   }
 
+  /**
+   * Schedules a redraw of the canvas on the next animation frame.
+   * @private
+   */
   private scheduleDraw() {
     if (!this.enabled || this.isDrawing) return;
     this.isDrawing = true;
@@ -106,15 +134,24 @@ export class HeatmapLayer {
     });
   }
 
+  /**
+   * Calculates the hue based on the number of visits.
+   * @param {number} visits The number of visits to a location.
+   * @returns {number} The calculated hue value.
+   * @private
+   */
   private getHue(visits: number): number {
-    // Coloring starts at 2. Scale it from 2 to maxVisits.
     const effectiveVisits = Math.max(0, visits - 2);
     const effectiveMax = Math.max(1, this.maxVisits - 2);
     const ratio = Math.min(effectiveVisits / effectiveMax, 1);
-    // HSL: 120 (Green) to 0 (Red)
-    return 120 * (1 - ratio);
+    
+    const hueRange = APP_CONFIG.HEATMAP_HUE_START - APP_CONFIG.HEATMAP_HUE_END;
+    return APP_CONFIG.HEATMAP_HUE_START - (ratio * hueRange);
   }
 
+  /**
+   * Performs the actual drawing of the heatmap on the canvas.
+   */
   public draw() {
     if (!this.enabled) return;
     const start = performance.now();
@@ -123,10 +160,8 @@ export class HeatmapLayer {
 
     const zoom = this.map.getZoom();
     const center = this.map.getCenter();
-    const metersPerPixel = (Math.cos(center.lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
-    const pixelsPerMeter = 1 / metersPerPixel;
+    const pixelsPerMeter = getPixelsPerMeter(center.lat, zoom);
     
-    // Scaling radius similar to FogLayer
     const baseRadiusMeters = this.meterRadius * APP_CONFIG.HEATMAP_RADIUS_MULTIPLIER;
     const effectiveMeterRadius = Math.max(baseRadiusMeters, this.detailMeters * 0.707);
     const radius = Math.max(5, effectiveMeterRadius * pixelsPerMeter);
@@ -136,7 +171,6 @@ export class HeatmapLayer {
 
     let drawnCount = 0;
     for (const p of this.points) {
-      // Per user request: visits (1) should not have a color at all.
       if (p.visits < 2) continue;
 
       const pos = this.map.project([p.lng, p.lat]);
@@ -158,11 +192,15 @@ export class HeatmapLayer {
 
     this.ctx.globalAlpha = 1.0;
     this.ctx.globalCompositeOperation = 'source-over';
-    console.log(`HeatmapLayer: Draw complete. Points rendered: ${drawnCount}/${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);
+    console.debug(`HeatmapLayer: Draw complete. Points: ${drawnCount}/${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);
   }
 
+  /**
+   * Cleans up resources used by the HeatmapLayer.
+   */
   public destroy() {
     this.resizeObserver.disconnect();
     this.canvas.remove();
   }
 }
+

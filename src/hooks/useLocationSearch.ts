@@ -3,11 +3,24 @@ import maplibregl from 'maplibre-gl';
 import type { RegionStats } from '../types';
 import { PLACE_TYPES } from '../Config';
 
+/**
+ * Hook to manage location search and reverse geocoding using Nominatim.
+ * Handles place search, bounding box fitting, and region statistics updates.
+ * 
+ * @param {React.MutableRefObject<maplibregl.Map | null>} map The map instance ref.
+ * @returns {object} Search state and control functions.
+ */
 export function useLocationSearch(map: React.MutableRefObject<maplibregl.Map | null>) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [regionStats, setRegionStats] = useState<RegionStats | null>(null);
 
+  /**
+   * Checks if the new search result represents the same place as the current region.
+   * @param {any} newResult The search result from Nominatim.
+   * @param {RegionStats | null} current The current region stats.
+   * @returns {boolean} True if they are the same place.
+   */
   const checkIfSamePlace = (newResult: any, current: RegionStats | null): boolean => {
     if (!current) return false;
     // Nominatim returns osm_id and osm_type
@@ -16,6 +29,11 @@ export function useLocationSearch(map: React.MutableRefObject<maplibregl.Map | n
     return sameId && sameType;
   };
 
+  /**
+   * Executes a search for the given query.
+   * @param {React.FormEvent} [e] Optional form event.
+   * @param {string} [overrideQuery] Optional query to override the current state.
+   */
   const handleSearch = async (e?: React.FormEvent, overrideQuery?: string) => {
     e?.preventDefault();
     const query = overrideQuery || searchQuery;
@@ -67,6 +85,11 @@ export function useLocationSearch(map: React.MutableRefObject<maplibregl.Map | n
     }
   };
 
+  /**
+   * Performs reverse geocoding to find the place at the given coordinates.
+   * @param {number} lat Latitude.
+   * @param {number} lng Longitude.
+   */
   const reverseGeocode = async (lat: number, lng: number) => {
     setIsSearching(true);
     try {

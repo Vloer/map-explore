@@ -10,6 +10,12 @@ interface StreetListPanelProps {
   onToggle: () => void;
 }
 
+/**
+ * Sidebar panel that displays a list of streets in the currently selected region.
+ * Provides filtering capabilities and allows clicking a street to center it on the map.
+ * 
+ * @param props Component properties containing street data, loading state, and visibility toggles.
+ */
 export function StreetListPanel({ streets, onStreetClick, isLoading, regionName, isVisible, onToggle }: StreetListPanelProps) {
   const [filter, setFilter] = useState('');
 

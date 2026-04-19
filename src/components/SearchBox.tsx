@@ -7,6 +7,12 @@ interface SearchBoxProps {
   isSearching: boolean;
 }
 
+/**
+ * Input field for searching geographic locations.
+ * Uses Nominatim (OSM) for geocoding through the useLocationSearch hook.
+ * 
+ * @param props Component properties containing search state and handlers.
+ */
 export function SearchBox({ searchQuery, setSearchQuery, handleSearch, isSearching }: SearchBoxProps) {
   return (
     <form onSubmit={handleSearch} style={{ display: 'flex', gap: '5px' }}>

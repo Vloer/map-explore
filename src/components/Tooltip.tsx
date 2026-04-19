@@ -5,6 +5,12 @@ interface TooltipProps {
   data: TooltipData;
 }
 
+/**
+ * Contextual tooltip that follows the mouse cursor on the map.
+ * Used for displaying location names, visit counts, or other feature-specific data.
+ * 
+ * @param props Component properties containing screen coordinates and text content.
+ */
 export function Tooltip({ data }: TooltipProps) {
   return (
     <div style={{

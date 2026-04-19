@@ -22,10 +22,25 @@ export const APP_CONFIG = {
   HEATMAP_MAX_VISITS: 50,
   HEATMAP_RADIUS_MULTIPLIER: 1.5,
   HEATMAP_OPACITY: 0.45,
+  HEATMAP_HUE_START: 120, // Green
+  HEATMAP_HUE_END: 0,     // Red
   
   // Fog settings
   FOG_OPACITY: 0.75,
   FOG_COLOR: 'rgba(15, 15, 20, 0.75)',
+
+  // Highlight settings
+  HIGHLIGHT_REGION_COLOR: 'rgba(0, 229, 255, 1)',
+  HIGHLIGHT_REGION_GLOW: 'rgba(0, 229, 255, 0.4)',
+  HIGHLIGHT_STREET_COLOR: 'rgba(255, 255, 0, 1)',
+  HIGHLIGHT_STREET_GLOW: 'rgba(255, 255, 0, 0.4)',
+  HIGHLIGHT_LINE_WIDTH_STREET: 6,
+  HIGHLIGHT_LINE_WIDTH_REGION: 4,
+  HIGHLIGHT_SHADOW_BLUR: 10,
+
+  // Rendering settings
+  RENDER_BUFFER_RATIO: 0.1,
+  MIN_PIXEL_DIST_SQ: 4,
 
   // Interaction settings
   HOVER_RADIUS_DEGREES: 0.0002,
@@ -39,9 +54,8 @@ export const APP_CONFIG = {
     VILLAGE: { minZoom: 12, maxZoom: 20, layer: 'place-village' },
   },
   
-  // Approximate areas in sq meters (fallback or reference)
-  // For a truly accurate calculation, we'd need a polygon-area service.
-  // We'll estimate % based on visible features for now.
+  // Cache settings
+  STREETS_CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
   // Constants
   METERS_PER_DEGREE: 111111,

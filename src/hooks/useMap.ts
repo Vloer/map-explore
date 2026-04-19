@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { APP_CONFIG } from '../Config';
 
+/**
+ * Hook to initialize and manage the MapLibre map instance.
+ * Sets up the map container, style, and navigation controls.
+ * 
+ * @returns {object} Map container ref, map instance ref, and ready state.
+ */
 export function useMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -50,3 +56,4 @@ export function useMap() {
 
   return { mapContainer, map, isMapReady };
 }
+

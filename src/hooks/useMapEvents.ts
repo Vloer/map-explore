@@ -4,6 +4,14 @@ import { databaseService } from '../services/DatabaseService';
 import { APP_CONFIG } from '../Config';
 import type { TooltipData } from '../types';
 
+/**
+ * Hook to manage map-level events and interactions.
+ * Currently handles mouse movement for displaying tooltips over visited locations.
+ * 
+ * @param {React.MutableRefObject<maplibregl.Map | null>} map The map instance ref.
+ * @param {boolean} isMapReady Whether the map has finished loading.
+ * @returns {object} Current tooltip data.
+ */
 export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>, isMapReady: boolean) {
   const [tooltip, setTooltip] = useState<TooltipData | null>(null);
 
@@ -11,6 +19,10 @@ export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>,
     if (!isMapReady || !map.current) return;
 
     let lastMove = 0;
+    /**
+     * Throttled mouse move handler to check for nearby visited points.
+     * @param {maplibregl.MapMouseEvent} e The mouse event.
+     */
     const onMouseMove = async (e: maplibregl.MapMouseEvent) => {
       if (!map.current || Date.now() - lastMove < 50) return;
       lastMove = Date.now();
@@ -42,3 +54,4 @@ export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>,
 
   return { tooltip };
 }
+

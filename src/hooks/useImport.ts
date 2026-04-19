@@ -2,6 +2,13 @@ import { useState, useRef } from 'react';
 import { databaseService } from '../services/DatabaseService';
 import type { ImportOptions, TimelineData } from '../types';
 
+/**
+ * Hook to manage the location history import process.
+ * Handles file selection, parsing, and transactional database import.
+ * 
+ * @param {() => void} onImportComplete Callback executed after a successful import.
+ * @returns {object} Import state and control functions.
+ */
 export function useImport(onImportComplete: () => void) {
   const [loading, setLoading] = useState(false);
   const [importStatus, setImportStatus] = useState('');
@@ -9,6 +16,10 @@ export function useImport(onImportComplete: () => void) {
   const [showImportModal, setShowImportModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Handles the selection of a JSON file and parses its contents.
+   * @param {React.ChangeEvent<HTMLInputElement>} event The file input change event.
+   */
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -29,6 +40,10 @@ export function useImport(onImportComplete: () => void) {
     event.target.value = '';
   };
 
+  /**
+   * Starts the database import process with the provided options.
+   * @param {ImportOptions} options Configuration for the import.
+   */
   const startImport = async (options: ImportOptions) => {
     if (!pendingData) return;
     setShowImportModal(false);
@@ -46,6 +61,9 @@ export function useImport(onImportComplete: () => void) {
     }
   };
 
+  /**
+   * Cancels the current import process and resets state.
+   */
   const cancelImport = () => {
     setShowImportModal(false);
     setLoading(false);
@@ -53,6 +71,9 @@ export function useImport(onImportComplete: () => void) {
     setPendingData(null);
   };
 
+  /**
+   * Triggers the hidden file input click event.
+   */
   const onButtonClick = () => fileInputRef.current?.click();
 
   return {
@@ -69,3 +90,4 @@ export function useImport(onImportComplete: () => void) {
     onButtonClick
   };
 }
+

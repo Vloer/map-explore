@@ -13,22 +13,41 @@ interface InternalLocationPoint {
   timestamp: string;
 }
 
+/**
+ * Service for managing the local SQLite (Wasm) database.
+ * Handles location history storage, deduplication, and spatial queries.
+ */
 export class DatabaseService {
   private sqlite3: any;
   private db: number | null = null;
   private vfs: any;
   private lock: Promise<void> = Promise.resolve();
 
+  /**
+   * The snapping factor for coordinates in E7 units.
+   * Based on the detail radius configured in APP_CONFIG.
+   * @private
+   */
   private get snapE7() {
     return metersToE7(APP_CONFIG.DETAIL_RADIUS_METERS);
   }
 
+  /**
+   * Helper to ensure database operations are serialized.
+   * @param {() => Promise<T>} fn The function to execute.
+   * @returns {Promise<T>}
+   * @private
+   */
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
     const nextLock = this.lock.then(fn);
     this.lock = nextLock.then(() => {}, () => {});
     return nextLock;
   }
 
+  /**
+   * Initializes the SQLite database and creates tables if they don't exist.
+   * @returns {Promise<void>}
+   */
   async init() {
     return this.withLock(async () => {
       if (this.db !== null) return;
@@ -53,6 +72,10 @@ export class DatabaseService {
     });
   }
 
+  /**
+   * Creates the necessary database tables and triggers.
+   * @private
+   */
   private async createTable() {
     if (!this.db) return;
 
@@ -101,6 +124,10 @@ export class DatabaseService {
     `);
   }
 
+  /**
+   * Clears all data from the database.
+   * @returns {Promise<void>}
+   */
   async clearDatabase() {
     return this.withLock(async () => {
       if (!this.db) return;
@@ -109,6 +136,12 @@ export class DatabaseService {
     });
   }
 
+  /**
+   * Retrieves cached street data for a specific OSM object.
+   * @param {number} osmId The OSM ID.
+   * @param {string} osmType The OSM type (e.g., 'relation', 'way').
+   * @returns {Promise<{ streets: any[], lastUpdated: number } | null>}
+   */
   async getStreetsCache(osmId: number, osmType: string): Promise<{ streets: any[], lastUpdated: number } | null> {
     if (!this.db) return null;
     return this.withLock(async () => {
@@ -134,6 +167,13 @@ export class DatabaseService {
     });
   }
 
+  /**
+   * Saves street data to the cache.
+   * @param {number} osmId The OSM ID.
+   * @param {string} osmType The OSM type.
+   * @param {any[]} streets Array of street objects to cache.
+   * @returns {Promise<void>}
+   */
   async saveStreetsCache(osmId: number, osmType: string, streets: any[]) {
     if (!this.db) return;
     return this.withLock(async () => {
@@ -153,6 +193,12 @@ export class DatabaseService {
     });
   }
 
+  /**
+   * Parses a lat,lng string into E7 integers.
+   * @param {string} s The "lat,lng" string.
+   * @returns {{latE7: number, lngE7: number} | null}
+   * @private
+   */
   private parseLatLngToE7(s: string): {latE7: number, lngE7: number} | null {
     try {
       const parts = s.split(',');
@@ -169,11 +215,23 @@ export class DatabaseService {
     }
   }
 
+  /**
+   * Snaps an E7 coordinate to the grid.
+   * @param {number} val The E7 coordinate value.
+   * @returns {number} The snapped E7 coordinate value.
+   * @private
+   */
   private snap(val: number): number {
     const s = this.snapE7;
     return Math.round(val / s) * s;
   }
 
+  /**
+   * Imports Google Location History (Timeline) data into the database.
+   * @param {TimelineData} data The parsed timeline JSON data.
+   * @param {ImportOptions} options Configuration for the import.
+   * @returns {Promise<void>}
+   */
   async importGoogleHistory(data: TimelineData, options: ImportOptions = { includeRawSignals: true, includeSemanticSegments: true }) {
     return this.withLock(async () => {
       console.log(`DatabaseService: Starting import (Raw: ${options.includeRawSignals}, Semantic: ${options.includeSemanticSegments})...`);
@@ -281,6 +339,16 @@ export class DatabaseService {
     });
   }
 
+  /**
+   * Retrieves all location points within a bounding box.
+   * Performs spatial downsampling if detail level is low.
+   * @param {number} minLat Minimum latitude.
+   * @param {number} maxLat Maximum latitude.
+   * @param {number} minLng Minimum longitude.
+   * @param {number} maxLng Maximum longitude.
+   * @param {number} minDetailMeters Minimum detail in meters (for downsampling).
+   * @returns {Promise<{lat: number, lng: number, visits: number}[]>}
+   */
   async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number, minDetailMeters: number = 0): Promise<{lat: number, lng: number, visits: number}[]> {
     if (!this.db) return [];
 
@@ -336,6 +404,13 @@ export class DatabaseService {
     });
   }
 
+  /**
+   * Finds the nearest location point to the given coordinates within a radius.
+   * @param {number} lat The latitude.
+   * @param {number} lng The longitude.
+   * @param {number} radiusDegrees The search radius in degrees.
+   * @returns {Promise<{lat: number, lng: number, timestamp: number, visits: number} | null>}
+   */
   async getNearestPoint(lat: number, lng: number, radiusDegrees: number): Promise<{lat: number, lng: number, timestamp: number, visits: number} | null> {
     if (!this.db) return null;
 
@@ -383,5 +458,6 @@ export class DatabaseService {
     });
   }
 }
+
 
 export const databaseService = new DatabaseService();

@@ -8,6 +8,7 @@ import { useMapEvents } from './hooks/useMapEvents';
 import { useStreets } from './hooks/useStreets';
 import { databaseService } from './services/DatabaseService';
 import { APP_CONFIG } from './Config';
+import { calculateCenter } from './Util';
 import type { Street } from './types';
 
 import { SearchBox } from './components/SearchBox';
@@ -18,6 +19,12 @@ import { Tooltip } from './components/Tooltip';
 import { HeatmapLegend } from './components/HeatmapLegend';
 import { StreetListPanel } from './components/StreetListPanel';
 
+/**
+ * Main application component for the World Fog of War map.
+ * Manages map state, layers, location search, and user data import.
+ * 
+ * @returns {JSX.Element} The rendered application.
+ */
 function App() {
   const { mapContainer, map, isMapReady } = useMap();
   const { 
@@ -46,9 +53,8 @@ function App() {
 
   const { explorationPercentage } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
-  const { streets, isLoading: isLoadingStreets, loadStreets, setStreets } = useStreets();
+  const { streets, isLoading: isLoadingStreets, loadStreets, setStreets, geoService } = useStreets();
 
-  // Sync regionStats with FogLayer highlight and load streets
   useEffect(() => {
     const features: any[] = [];
     if (regionStats?.geojson) {
@@ -79,42 +85,15 @@ function App() {
   const handleStreetClick = (street: Street) => {
     if (!map.current || !street.coordinates || street.coordinates.length === 0) return;
     
-    // Calculate center of the street
-    let sumLat = 0;
-    let sumLng = 0;
-    street.coordinates.forEach(c => {
-      sumLat += c.lat;
-      sumLng += c.lng;
-    });
-    
-    const centerLat = sumLat / street.coordinates.length;
-    const centerLng = sumLng / street.coordinates.length;
+    const center = calculateCenter(street.coordinates);
     
     map.current.flyTo({
-      center: [centerLng, centerLat],
+      center: [center.lng, center.lat],
       zoom: 17,
       essential: true
     });
 
-    // Create a MultiLineString for the street highlight
-    const multiLine: number[][][] = [];
-    if (street.segments && street.segments.length > 0) {
-      street.segments.forEach(seg => {
-        multiLine.push(seg.coordinates.map(c => [c.lng, c.lat]));
-      });
-    } else {
-      // PDOK or simple coordinate streets
-      multiLine.push(street.coordinates.map(c => [c.lng, c.lat]));
-    }
-
-    setStreetHighlight({
-      type: 'Feature',
-      properties: { type: 'street', name: street.name },
-      geometry: {
-        type: 'MultiLineString',
-        coordinates: multiLine
-      }
-    });
+    setStreetHighlight(geoService.createStreetHighlightFeature(street));
   };
 
   const {
@@ -129,18 +108,11 @@ function App() {
     fileInputRef
   } = useImport(onImportComplete);
 
-  // Handle map click for reverse geocoding
   useEffect(() => {
     if (!isMapReady || !map.current) return;
-
-    const onClick = (e: maplibregl.MapMouseEvent) => {
-      reverseGeocode(e.lngLat.lat, e.lngLat.lng);
-    };
-
+    const onClick = (e: any) => reverseGeocode(e.lngLat.lat, e.lngLat.lng);
     map.current.on('click', onClick);
-    return () => {
-      map.current?.off('click', onClick);
-    };
+    return () => { map.current?.off('click', onClick); };
   }, [isMapReady, map, reverseGeocode]);
 
   const handleRadiusChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -207,12 +179,8 @@ function App() {
       </div>
 
       {tooltip && <Tooltip data={tooltip} />}
-
       {heatmapEnabled && <HeatmapLegend heatmapStrength={heatmapStrength} />}
-
-      {showImportModal && (
-        <ImportModal onStart={startImport} onCancel={cancelImport} />
-      )}
+      {showImportModal && <ImportModal onStart={startImport} onCancel={cancelImport} />}
 
       <Controls 
         fogRadius={fogRadius}

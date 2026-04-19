@@ -24,9 +24,18 @@ export const STREET_TYPES_TO_IGNORE = [
   "pedestrian",
 ];
 
+/**
+ * Service for fetching street data from external APIs (Overpass and PDOK).
+ */
 export class StreetAPIService {
   constructor() {}
 
+  /**
+   * Prepares a bounding box string for Overpass API.
+   * @param {BoundingBox} bbox The bounding box object.
+   * @returns {string} Comma-separated bounding box string.
+   * @private
+   */
   private _prepareBboxString(bbox: BoundingBox): string {
     let potentialResult: string | undefined;
     if (bbox.toString && typeof bbox.toString === "function") {
@@ -39,6 +48,12 @@ export class StreetAPIService {
     return bboxStr;
   }
 
+  /**
+   * Builds an Overpass QL query for highways in a bounding box.
+   * @param {string} bboxString The bounding box string.
+   * @returns {string} The Overpass QL query.
+   * @private
+   */
   private _buildOverpassQuery(bboxString: string): string {
     return `
 [out:json][timeout:90];
@@ -49,6 +64,12 @@ out center;
     `.trim();
   }
 
+  /**
+   * Fetches data from the Overpass API.
+   * @param {string} query The Overpass QL query.
+   * @returns {Promise<any>} The JSON response from Overpass.
+   * @private
+   */
   private async _fetchOverpassData(query: string): Promise<any> {
     const formBody = new URLSearchParams();
     formBody.append("data", query);
@@ -69,6 +90,13 @@ out center;
     return await response.json();
   }
 
+  /**
+   * Parses the raw JSON response from Overpass into nodes and segments.
+   * @param {any} data Raw Overpass response.
+   * @param {string} placeName Name of the place (city/region).
+   * @returns {{ nodes: { [id: number]: Node }; segments: StreetSegment[] }}
+   * @private
+   */
   private _parseOverpassResponse(
     data: any,
     placeName: string
@@ -125,6 +153,12 @@ out center;
     return { nodes, segments };
   }
 
+  /**
+   * Groups street segments by name into Street objects.
+   * @param {StreetSegment[]} segments Array of street segments.
+   * @returns {Street[]} Array of consolidated Street objects.
+   * @private
+   */
   private _groupSegmentsIntoStreets(segments: StreetSegment[]): Street[] {
     const streetByName: { [name: string]: Street } = {};
 
@@ -153,7 +187,10 @@ out center;
   }
 
   /**
-   * Fetches streets from PDOK Locatieserver (high performance for NL)
+   * Fetches streets from PDOK Locatieserver (high performance for NL).
+   * @param {string} placeName The name of the city or municipality.
+   * @param {string} [placeType] Optional type (e.g., 'municipality').
+   * @returns {Promise<Street[]>} Array of Street objects.
    */
   async getStreetsInNL(placeName: string, placeType?: string): Promise<Street[]> {
     console.info(`Fetching streets from PDOK for: ${placeName}`);
@@ -204,6 +241,13 @@ out center;
     return streets.sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /**
+   * Fetches streets within a bounding box, attempting PDOK first for NL.
+   * @param {string} placeName The name of the place.
+   * @param {BoundingBox} bbox The bounding box.
+   * @param {string} [placeType] Optional place type.
+   * @returns {Promise<Street[]>} Array of Street objects.
+   */
   async getStreetsInBoundingBox(
     placeName: string,
     bbox: BoundingBox,
@@ -225,3 +269,4 @@ out center;
     return this._groupSegmentsIntoStreets(segments);
   }
 }
+

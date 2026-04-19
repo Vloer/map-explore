@@ -10,7 +10,18 @@ export interface ProgressReport {
   message: string;
 }
 
+/**
+ * Service for geometric operations on street data.
+ * Handles spatial filtering and feature creation for map display.
+ */
 export class StreetGeoService {
+  /**
+   * Filters a list of streets to only include those that intersect with or are within a polygon.
+   * @param {Street[]} streets Array of streets to filter.
+   * @param {number[][]} boundingPolygon Coordinates of the bounding polygon.
+   * @param {(progress: ProgressReport) => void} [reportProgress] Optional callback for progress updates.
+   * @returns {Promise<Street[]>} The filtered list of streets.
+   */
   public async filterStreetsInPolygon(
     streets: Street[],
     boundingPolygon: number[][],
@@ -28,7 +39,6 @@ export class StreetGeoService {
     for (let i = 0; i < streets.length; i += chunkSize) {
       const chunk = streets.slice(i, i + chunkSize);
       for (const street of chunk) {
-        // PDOK streets might not have segments array populated but have coordinates
         const segmentsToProcess = (street.segments && street.segments.length > 0) 
           ? street.segments 
           : [{ coordinates: street.coordinates } as StreetSegment];
@@ -38,13 +48,11 @@ export class StreetGeoService {
           if (!segment.coordinates || segment.coordinates.length === 0) continue;
           
           if (segment.coordinates.length === 1) {
-            // Point-in-polygon check for PDOK / single-node results
             const point = turf.point([segment.coordinates[0].lng, segment.coordinates[0].lat]);
             if (turf.booleanPointInPolygon(point, polygon)) {
               segmentsInPolygon.push(segment);
             }
           } else {
-            // Line-in-polygon check for standard OSM results
             const lineCoords = segment.coordinates.map((node) => [node.lng, node.lat]);
             const streetLine = turf.lineString(lineCoords);
             if (turf.booleanIntersects(streetLine, polygon) || turf.booleanWithin(streetLine, polygon)) {
@@ -73,6 +81,37 @@ export class StreetGeoService {
     return filteredStreets;
   }
 
+  /**
+   * Creates a GeoJSON Feature for street highlighting.
+   * @param {Street} street The street object.
+   * @returns {any} A GeoJSON MultiLineString feature.
+   */
+  public createStreetHighlightFeature(street: Street): any {
+    const multiLine: number[][][] = [];
+    if (street.segments && street.segments.length > 0) {
+      street.segments.forEach(seg => {
+        multiLine.push(seg.coordinates.map(c => [c.lng, c.lat]));
+      });
+    } else {
+      multiLine.push(street.coordinates.map(c => [c.lng, c.lat]));
+    }
+
+    return {
+      type: 'Feature',
+      properties: { type: 'street', name: street.name },
+      geometry: {
+        type: 'MultiLineString',
+        coordinates: multiLine
+      }
+    };
+  }
+
+  /**
+   * Ensures the polygon coordinates form a closed loop.
+   * @param {number[][]} polygon The polygon coordinates.
+   * @returns {number[][]} Closed polygon coordinates.
+   * @private
+   */
   private _ensurePolygonIsClosed(polygon: number[][]): number[][] {
     const coords = polygon.map((c) => [c[0], c[1]]);
     if (coords.length > 0) {
@@ -83,6 +122,12 @@ export class StreetGeoService {
     return coords;
   }
 
+  /**
+   * Determines the optimal chunk size for street processing based on the total amount.
+   * @param {number} amount Total number of streets.
+   * @returns {number} The chunk size.
+   * @private
+   */
   private _setChunkSize(amount: number): number {
     if (amount < 200) return 10;
     if (amount < 1000) return 50;
@@ -90,3 +135,4 @@ export class StreetGeoService {
     return 500;
   }
 }
+

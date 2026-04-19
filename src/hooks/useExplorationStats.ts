@@ -3,6 +3,14 @@ import * as turf from '@turf/turf';
 import { databaseService } from '../services/DatabaseService';
 import type { RegionStats } from '../types';
 
+/**
+ * Hook to calculate exploration statistics for a given region.
+ * Generates a grid of points within the region and checks how many have been "revealed" by the user's history.
+ * 
+ * @param {RegionStats | null} regionStats The statistics and geometry of the region.
+ * @param {number} fogRadius The radius in meters to consider a point explored.
+ * @returns {{ explorationPercentage: number, setExplorationPercentage: (p: number) => void }}
+ */
 export function useExplorationStats(regionStats: RegionStats | null, fogRadius: number) {
   const [explorationPercentage, setExplorationPercentage] = useState<number>(0);
   const lastCalculationRef = useRef<{ id: string; radius: number } | null>(null);
@@ -19,6 +27,11 @@ export function useExplorationStats(regionStats: RegionStats | null, fogRadius: 
     }
   }, [regionStats, fogRadius]);
 
+  /**
+   * Performs the grid-based geometric calculation of the exploration percentage.
+   * @param {RegionStats} stats The region statistics.
+   * @private
+   */
   const calculatePercentage = async (stats: RegionStats) => {
     const [minLat, maxLat, minLng, maxLng] = stats.bounds;
     const allPoints = await databaseService.getPointsInBounds(minLat, maxLat, minLng, maxLng);

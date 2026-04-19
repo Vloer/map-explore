@@ -14,6 +14,10 @@ interface ControlsProps {
   importStatus: string;
 }
 
+/**
+ * UI Controls for the World Fog of War map.
+ * Includes radius adjustment, heatmap toggles, and data management options.
+ */
 export function Controls({
   fogRadius,
   onRadiusChange,

@@ -1,8 +1,13 @@
 import maplibregl from 'maplibre-gl';
 import { DatabaseService } from './services/DatabaseService';
 import { APP_CONFIG } from './Config';
+import { getPixelsPerMeter } from './Util';
 import type { LocationPoint } from './types';
 
+/**
+ * Manages the "Fog of War" canvas overlay on the map.
+ * This layer renders a dark overlay (fog) and "cuts out" areas where the user has been.
+ */
 export class FogLayer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -13,19 +18,26 @@ export class FogLayer {
   private highlightGeoJSON: any = null;
   private isDrawing = false;
   
+  /** The radius in meters to reveal around each location point. */
   public meterRadius: number = APP_CONFIG.BASE_FOG_REVEAL_RADIUS; 
 
+  /**
+   * Creates an instance of FogLayer.
+   * @param {maplibregl.Map} map The MapLibre map instance.
+   * @param {DatabaseService} db The database service for retrieving location points.
+   */
   constructor(map: maplibregl.Map, db: DatabaseService) {
-    console.log("FogLayer: Constructor started");
     this.map = map;
     this.db = db;
 
     this.canvas = document.createElement('canvas');
-    this.canvas.style.position = 'absolute';
-    this.canvas.style.top = '0';
-    this.canvas.style.left = '0';
-    this.canvas.style.pointerEvents = 'none';
-    this.canvas.style.zIndex = '1';
+    Object.assign(this.canvas.style, {
+      position: 'absolute',
+      top: '0',
+      left: '0',
+      pointerEvents: 'none',
+      zIndex: '1'
+    });
     
     const container = map.getContainer();
     container.appendChild(this.canvas);
@@ -50,6 +62,10 @@ export class FogLayer {
     this.refreshData();
   }
 
+  /**
+   * Resizes the canvas to match the map container size and handles High DPI screens.
+   * @private
+   */
   private resizeCanvas() {
     const container = this.map.getContainer();
     const rect = container.getBoundingClientRect();
@@ -65,17 +81,20 @@ export class FogLayer {
 
   private detailMeters: number = 0;
 
+  /**
+   * Refreshes the location points from the database based on the current map view.
+   * @returns {Promise<void>}
+   */
   public async refreshData() {
     const start = performance.now();
     const bounds = this.map.getBounds();
     const zoom = this.map.getZoom();
     const center = this.map.getCenter();
     
-    // Calculate detail level: we want roughly 2 pixels of detail
-    const metersPerPixel = (Math.cos(center.lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
-    this.detailMeters = metersPerPixel * 2;
+    const pixelsPerMeter = getPixelsPerMeter(center.lat, zoom);
+    this.detailMeters = 2 / pixelsPerMeter; // 2 pixels of detail
 
-    const buffer = 0.1; 
+    const buffer = APP_CONFIG.RENDER_BUFFER_RATIO; 
     const latBuffer = (bounds.getNorth() - bounds.getSouth()) * buffer;
     const lngBuffer = (bounds.getEast() - bounds.getWest()) * buffer;
 
@@ -87,15 +106,23 @@ export class FogLayer {
       this.detailMeters
     );
     
-    console.log(`FogLayer: Refreshed data. Points in buffer: ${this.points.length} (Detail: ${this.detailMeters.toFixed(1)}m, ${(performance.now() - start).toFixed(2)}ms)`);
+    console.debug(`FogLayer: Refreshed data. Points: ${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);
     this.scheduleDraw();
   }
 
+  /**
+   * Sets the GeoJSON features to be highlighted on the fog layer.
+   * @param {any} geojson GeoJSON feature or collection to highlight.
+   */
   public setHighlight(geojson: any) {
     this.highlightGeoJSON = geojson;
     this.scheduleDraw();
   }
 
+  /**
+   * Schedules a redraw of the canvas on the next animation frame.
+   * @private
+   */
   private scheduleDraw() {
     if (this.isDrawing) return;
     this.isDrawing = true;
@@ -105,11 +132,9 @@ export class FogLayer {
     });
   }
 
-  private getPixelsPerMeter(lat: number, zoom: number): number {
-    const metersPerPixel = (Math.cos(lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
-    return 1 / metersPerPixel;
-  }
-
+  /**
+   * Performs the actual drawing of the fog and revealed areas on the canvas.
+   */
   public draw() {
     const start = performance.now();
     const { width, height } = this.canvas.getBoundingClientRect();
@@ -125,17 +150,13 @@ export class FogLayer {
     if (this.points.length > 0) {
       this.ctx.globalCompositeOperation = 'destination-out';
       
-      const pixelsPerMeter = this.getPixelsPerMeter(center.lat, zoom);
-
-      // The effective radius is the larger of:
-      // 1. The user-selected meterRadius
-      // 2. A radius that covers the gap between downsampled points (detailMeters * 0.707)
+      const pixelsPerMeter = getPixelsPerMeter(center.lat, zoom);
       const effectiveMeterRadius = Math.max(this.meterRadius, this.detailMeters * 0.707);
       const radius = Math.max(3, effectiveMeterRadius * pixelsPerMeter);
 
       let lastX = -9999;
       let lastY = -9999;
-      const minPixelDistSq = 4; // 2 pixels distance
+      const minPixelDistSq = APP_CONFIG.MIN_PIXEL_DIST_SQ;
 
       this.ctx.beginPath();
       for (const p of this.points) {
@@ -161,94 +182,85 @@ export class FogLayer {
       this.ctx.fill();
     }
 
-    // Draw highlight polygon on top
-    if (this.highlightGeoJSON) {
-      this.ctx.globalCompositeOperation = 'source-over';
-      this.ctx.lineCap = 'round';
-      this.ctx.lineJoin = 'round';
-      
-      const drawCoords = (coords: any[], color: string, width: number, blur: number) => {
-        if (!coords || coords.length === 0) return;
-        
-        this.ctx.beginPath();
-        this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = width;
-        
-        if (blur > 0) {
-          this.ctx.shadowBlur = blur;
-          this.ctx.shadowColor = color;
-        } else {
-          this.ctx.shadowBlur = 0;
-        }
+    this.drawHighlights();
 
-        if (coords.length === 1) {
-          // Special case: Single point (common for PDOK centroids)
-          // Draw a small circle to make the highlight visible
-          const pos = this.map.project([coords[0][0], coords[0][1]]);
-          this.ctx.fillStyle = color;
-          this.ctx.arc(pos.x, pos.y, width / 2, 0, Math.PI * 2);
-          this.ctx.fill();
-        } else {
-          // Standard case: Multiple points (LineString)
-          coords.forEach((coord, i) => {
-            const pos = this.map.project([coord[0], coord[1]]);
-            if (i === 0) {
-              this.ctx.moveTo(pos.x, pos.y);
-            } else {
-              this.ctx.lineTo(pos.x, pos.y);
-            }
-          });
-          this.ctx.stroke();
-        }
-      };
-
-      const processGeometry = (geometry: any, type: string) => {
-        if (!geometry) return;
-        
-        const isStreet = type === 'street';
-        const baseColor = isStreet ? 'rgba(255, 255, 0, 1)' : 'rgba(0, 229, 255, 1)';
-        const glowColor = isStreet ? 'rgba(255, 255, 0, 0.4)' : 'rgba(0, 229, 255, 0.4)';
-        
-        const geometries = geometry.type === 'Polygon' ? [geometry.coordinates[0]] :
-                           geometry.type === 'MultiPolygon' ? geometry.coordinates.map((p: any) => p[0]) :
-                           geometry.type === 'LineString' ? [geometry.coordinates] :
-                           geometry.type === 'MultiLineString' ? geometry.coordinates : [];
-
-        geometries.forEach((coords: any[]) => {
-          if (isStreet) {
-            // Draw multi-layered glow for streets
-            drawCoords(coords, glowColor, 12, 10);
-            drawCoords(coords, glowColor, 8, 5);
-            drawCoords(coords, baseColor, 3, 0);
-          } else {
-            // Standard highlight for regions
-            drawCoords(coords, baseColor, 4, 10);
-          }
-        });
-      };
-
-      const processFeature = (feature: any) => {
-        if (!feature) return;
-        const type = feature.properties?.type || 'unknown';
-        processGeometry(feature.geometry || feature, type);
-      };
-
-      if (this.highlightGeoJSON.type === 'Feature') {
-        processFeature(this.highlightGeoJSON);
-      } else if (this.highlightGeoJSON.type === 'FeatureCollection') {
-        this.highlightGeoJSON.features.forEach(processFeature);
-      } else {
-        processFeature({ geometry: this.highlightGeoJSON });
-      }
-      
-      this.ctx.shadowBlur = 0; // Reset shadow
-    }
-
-    console.log(`FogLayer: Draw complete. Points rendered: ${drawnCount}/${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);
+    console.debug(`FogLayer: Draw complete. Points: ${drawnCount}/${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);
   }
 
+  /**
+   * Renders the highlights (regions and streets) on top of the fog.
+   * @private
+   */
+  private drawHighlights() {
+    if (!this.highlightGeoJSON) return;
+
+    this.ctx.globalCompositeOperation = 'source-over';
+    this.ctx.lineCap = 'round';
+    this.ctx.lineJoin = 'round';
+    
+    const drawCoords = (coords: any[], color: string, lineWidth: number, blur: number) => {
+      if (!coords || coords.length === 0) return;
+      
+      this.ctx.beginPath();
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = lineWidth;
+      this.ctx.shadowBlur = blur;
+      this.ctx.shadowColor = color;
+
+      if (coords.length === 1) {
+        const pos = this.map.project([coords[0][0], coords[0][1]]);
+        this.ctx.fillStyle = color;
+        this.ctx.arc(pos.x, pos.y, lineWidth / 2, 0, Math.PI * 2);
+        this.ctx.fill();
+      } else {
+        coords.forEach((coord, i) => {
+          const pos = this.map.project([coord[0], coord[1]]);
+          if (i === 0) this.ctx.moveTo(pos.x, pos.y);
+          else this.ctx.lineTo(pos.x, pos.y);
+        });
+        this.ctx.stroke();
+      }
+    };
+
+    const processGeometry = (geometry: any, type: string) => {
+      if (!geometry) return;
+      const isStreet = type === 'street';
+      
+      const geometries = geometry.type === 'Polygon' ? [geometry.coordinates[0]] :
+                         geometry.type === 'MultiPolygon' ? geometry.coordinates.map((p: any) => p[0]) :
+                         geometry.type === 'LineString' ? [geometry.coordinates] :
+                         geometry.type === 'MultiLineString' ? geometry.coordinates : [];
+
+      geometries.forEach((coords: any[]) => {
+        if (isStreet) {
+          drawCoords(coords, APP_CONFIG.HIGHLIGHT_STREET_GLOW, APP_CONFIG.HIGHLIGHT_LINE_WIDTH_STREET * 2, APP_CONFIG.HIGHLIGHT_SHADOW_BLUR);
+          drawCoords(coords, APP_CONFIG.HIGHLIGHT_STREET_COLOR, APP_CONFIG.HIGHLIGHT_LINE_WIDTH_STREET / 2, 0);
+        } else {
+          drawCoords(coords, APP_CONFIG.HIGHLIGHT_REGION_COLOR, APP_CONFIG.HIGHLIGHT_LINE_WIDTH_REGION, APP_CONFIG.HIGHLIGHT_SHADOW_BLUR);
+        }
+      });
+    };
+
+    const processFeature = (feature: any) => {
+      if (!feature) return;
+      processGeometry(feature.geometry || feature, feature.properties?.type || 'unknown');
+    };
+
+    if (this.highlightGeoJSON.type === 'FeatureCollection') {
+      this.highlightGeoJSON.features.forEach(processFeature);
+    } else {
+      processFeature(this.highlightGeoJSON);
+    }
+    
+    this.ctx.shadowBlur = 0; 
+  }
+
+  /**
+   * Cleans up resources used by the FogLayer.
+   */
   public destroy() {
     this.resizeObserver.disconnect();
     this.canvas.remove();
   }
 }
+

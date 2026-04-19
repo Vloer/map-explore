@@ -6,6 +6,12 @@ interface RegionStatsCardProps {
   onShowStreets: () => void;
 }
 
+/**
+ * Information card for a specific geographic region (e.g., city, neighborhood).
+ * Displays exploration progress percentage and provides access to the street list.
+ * 
+ * @param props Component properties containing stats, exploration percentage, and callbacks.
+ */
 export function RegionStatsCard({ stats, percentage, onShowStreets }: RegionStatsCardProps) {
   return (
     <div style={{

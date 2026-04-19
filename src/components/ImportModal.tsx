@@ -5,6 +5,12 @@ interface ImportModalProps {
   onCancel: () => void;
 }
 
+/**
+ * Modal dialog for selecting location history import options.
+ * Allows users to choose between full detail (raw signals) or semantic segments only.
+ * 
+ * @param props Component properties containing start and cancel callbacks.
+ */
 export function ImportModal({ onStart, onCancel }: ImportModalProps) {
   return (
     <div style={{
