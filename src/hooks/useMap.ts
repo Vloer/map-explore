@@ -29,8 +29,7 @@ export function useMap() {
         },
         center: APP_CONFIG.MAP_INITIAL_CENTER,
         zoom: APP_CONFIG.MAP_INITIAL_ZOOM,
-        maxZoom: APP_CONFIG.MAP_MAX_ZOOM,
-        attributionControl: true
+        maxZoom: APP_CONFIG.MAP_MAX_ZOOM
       });
 
       map.current.addControl(new maplibregl.NavigationControl());

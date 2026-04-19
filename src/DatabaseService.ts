@@ -4,8 +4,8 @@ import SQLiteESMFactory from 'wa-sqlite/dist/wa-sqlite-async.mjs';
 // @ts-ignore
 import { IDBBatchAtomicVFS } from 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
 import { APP_CONFIG } from './Config';
-import { metersToE7 } from './Util';
-import type { LocationPoint, DetailedLocationPoint, TimelineData, ImportOptions } from './types';
+import { metersToE7, getDistanceE7 } from './Util';
+import type { TimelineData, ImportOptions } from './types';
 
 interface InternalLocationPoint {
   latE7: number;
@@ -130,34 +130,54 @@ export class DatabaseService {
       const points: InternalLocationPoint[] = [];
 
       if (options.includeRawSignals && data.rawSignals) {
+        let lastLatE7 = 0;
+        let lastLngE7 = 0;
         for (const signal of data.rawSignals) {
           if (signal.position?.LatLng && signal.position.timestamp) {
             const coords = this.parseLatLngToE7(signal.position.LatLng);
             if (coords) {
-              points.push({
-                latE7: coords.latE7,
-                lngE7: coords.lngE7,
-                timestamp: signal.position.timestamp
-              });
+              if (getDistanceE7(lastLatE7, lastLngE7, coords.latE7, coords.lngE7) > APP_CONFIG.IMPORT_DECIMATION_METERS) {
+                points.push({
+                  latE7: coords.latE7,
+                  lngE7: coords.lngE7,
+                  timestamp: signal.position.timestamp
+                });
+                lastLatE7 = coords.latE7;
+                lastLngE7 = coords.lngE7;
+              }
             }
           }
         }
       }
 
       if (options.includeSemanticSegments && data.semanticSegments) {
+        let lastLatE7 = 0;
+        let lastLngE7 = 0;
         for (const segment of data.semanticSegments) {
           if (segment.timelinePath) {
             for (const tp of segment.timelinePath) {
               if (tp.point && tp.time) {
                 const coords = this.parseLatLngToE7(tp.point);
-                if (coords) points.push({ latE7: coords.latE7, lngE7: coords.lngE7, timestamp: tp.time });
+                if (coords) {
+                  if (getDistanceE7(lastLatE7, lastLngE7, coords.latE7, coords.lngE7) > APP_CONFIG.IMPORT_DECIMATION_METERS) {
+                    points.push({ latE7: coords.latE7, lngE7: coords.lngE7, timestamp: tp.time });
+                    lastLatE7 = coords.latE7;
+                    lastLngE7 = coords.lngE7;
+                  }
+                }
               }
             }
           }
           const visitLoc = segment.visit?.topCandidate?.placeLocation?.latLng;
           if (visitLoc && segment.startTime) {
             const coords = this.parseLatLngToE7(visitLoc);
-            if (coords) points.push({ latE7: coords.latE7, lngE7: coords.lngE7, timestamp: segment.startTime });
+            if (coords) {
+              if (getDistanceE7(lastLatE7, lastLngE7, coords.latE7, coords.lngE7) > APP_CONFIG.IMPORT_DECIMATION_METERS) {
+                points.push({ latE7: coords.latE7, lngE7: coords.lngE7, timestamp: segment.startTime });
+                lastLatE7 = coords.latE7;
+                lastLngE7 = coords.lngE7;
+              }
+            }
           }
         }
       }
@@ -209,7 +229,7 @@ export class DatabaseService {
     });
   }
 
-  async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number): Promise<{lat: number, lng: number, visits: number}[]> {
+  async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number, minDetailMeters: number = 0): Promise<{lat: number, lng: number, visits: number}[]> {
     if (!this.db) return [];
 
     return this.withLock(async () => {
@@ -219,10 +239,28 @@ export class DatabaseService {
       const minLngE7 = Math.round(minLng * 1e7);
       const maxLngE7 = Math.round(maxLng * 1e7);
 
-      const sql = `
-        SELECT lat_e7, lng_e7, visit_count FROM locations 
-        WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
-      `;
+      const factor = Math.max(1, metersToE7(minDetailMeters));
+      
+      let sql: string;
+      if (factor <= this.snapE7) {
+        // High detail: standard query
+        sql = `
+          SELECT lat_e7, lng_e7, visit_count FROM locations 
+          WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
+        `;
+      } else {
+        // Low detail: Group by buckets to downsample in-database
+        // We use integer division to create buckets and center the points
+        sql = `
+          SELECT 
+            (lat_e7 / ${factor}) * ${factor} + (${factor} / 2) as lat,
+            (lng_e7 / ${factor}) * ${factor} + (${factor} / 2) as lng,
+            MAX(visit_count) as visits
+          FROM locations 
+          WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
+          GROUP BY lat_e7 / ${factor}, lng_e7 / ${factor}
+        `;
+      }
       
       try {
         for await (const stmt of this.sqlite3.statements(this.db, sql)) {

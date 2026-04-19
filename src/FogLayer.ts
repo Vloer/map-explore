@@ -63,9 +63,18 @@ export class FogLayer {
     this.ctx.scale(dpr, dpr);
   }
 
+  private detailMeters: number = 0;
+
   public async refreshData() {
+    const start = performance.now();
     const bounds = this.map.getBounds();
+    const zoom = this.map.getZoom();
+    const center = this.map.getCenter();
     
+    // Calculate detail level: we want roughly 2 pixels of detail
+    const metersPerPixel = (Math.cos(center.lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
+    this.detailMeters = metersPerPixel * 2;
+
     const buffer = 0.1; 
     const latBuffer = (bounds.getNorth() - bounds.getSouth()) * buffer;
     const lngBuffer = (bounds.getEast() - bounds.getWest()) * buffer;
@@ -74,9 +83,11 @@ export class FogLayer {
       bounds.getSouth() - latBuffer,
       bounds.getNorth() + latBuffer,
       bounds.getWest() - lngBuffer,
-      bounds.getEast() + lngBuffer
+      bounds.getEast() + lngBuffer,
+      this.detailMeters
     );
     
+    console.log(`FogLayer: Refreshed data. Points in buffer: ${this.points.length} (Detail: ${this.detailMeters.toFixed(1)}m, ${(performance.now() - start).toFixed(2)}ms)`);
     this.scheduleDraw();
   }
 
@@ -100,6 +111,7 @@ export class FogLayer {
   }
 
   public draw() {
+    const start = performance.now();
     const { width, height } = this.canvas.getBoundingClientRect();
     const zoom = this.map.getZoom();
     const center = this.map.getCenter();
@@ -109,11 +121,17 @@ export class FogLayer {
     this.ctx.fillStyle = APP_CONFIG.FOG_COLOR; 
     this.ctx.fillRect(0, 0, width, height);
 
+    let drawnCount = 0;
     if (this.points.length > 0) {
       this.ctx.globalCompositeOperation = 'destination-out';
       
       const pixelsPerMeter = this.getPixelsPerMeter(center.lat, zoom);
-      const radius = Math.max(3, this.meterRadius * pixelsPerMeter);
+
+      // The effective radius is the larger of:
+      // 1. The user-selected meterRadius
+      // 2. A radius that covers the gap between downsampled points (detailMeters * 0.707)
+      const effectiveMeterRadius = Math.max(this.meterRadius, this.detailMeters * 0.707);
+      const radius = Math.max(3, effectiveMeterRadius * pixelsPerMeter);
 
       let lastX = -9999;
       let lastY = -9999;
@@ -138,6 +156,7 @@ export class FogLayer {
         
         lastX = pos.x;
         lastY = pos.y;
+        drawnCount++;
       }
       this.ctx.fill();
     }
@@ -145,7 +164,7 @@ export class FogLayer {
     // Draw highlight polygon on top
     if (this.highlightGeoJSON) {
       this.ctx.globalCompositeOperation = 'source-over';
-      this.ctx.strokeStyle = '#00E5FF'; // Vibrant Cyan
+      this.ctx.strokeStyle = '#00E5FF';
       this.ctx.lineWidth = 4;
       this.ctx.lineJoin = 'round';
       this.ctx.shadowBlur = 10;
@@ -179,6 +198,8 @@ export class FogLayer {
       
       this.ctx.shadowBlur = 0; // Reset shadow
     }
+
+    console.log(`FogLayer: Draw complete. Points rendered: ${drawnCount}/${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);
   }
 
   public destroy() {

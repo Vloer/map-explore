@@ -1,4 +1,3 @@
-import React from 'react';
 import { APP_CONFIG } from '../Config';
 import type { TooltipData } from '../types';
 

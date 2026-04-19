@@ -1,4 +1,3 @@
-import React from 'react';
 import type { ImportOptions } from '../types';
 
 interface ImportModalProps {

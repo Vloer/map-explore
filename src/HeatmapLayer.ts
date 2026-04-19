@@ -68,9 +68,19 @@ export class HeatmapLayer {
     this.ctx.scale(dpr, dpr);
   }
 
+  private detailMeters: number = 0;
+
   public async refreshData() {
     if (!this.enabled) return;
+    const start = performance.now();
     const bounds = this.map.getBounds();
+    const zoom = this.map.getZoom();
+    const center = this.map.getCenter();
+    
+    // Calculate detail level: we want roughly 2 pixels of detail
+    const metersPerPixel = (Math.cos(center.lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
+    this.detailMeters = metersPerPixel * 2;
+
     const buffer = 0.1; 
     const latBuffer = (bounds.getNorth() - bounds.getSouth()) * buffer;
     const lngBuffer = (bounds.getEast() - bounds.getWest()) * buffer;
@@ -79,9 +89,11 @@ export class HeatmapLayer {
       bounds.getSouth() - latBuffer,
       bounds.getNorth() + latBuffer,
       bounds.getWest() - lngBuffer,
-      bounds.getEast() + lngBuffer
+      bounds.getEast() + lngBuffer,
+      this.detailMeters
     );
     
+    console.log(`HeatmapLayer: Refreshed data. Points in buffer: ${this.points.length} (Detail: ${this.detailMeters.toFixed(1)}m, ${(performance.now() - start).toFixed(2)}ms)`);
     this.scheduleDraw();
   }
 
@@ -105,19 +117,24 @@ export class HeatmapLayer {
 
   public draw() {
     if (!this.enabled) return;
+    const start = performance.now();
     const { width, height } = this.canvas.getBoundingClientRect();
     this.ctx.clearRect(0, 0, width, height);
 
     const zoom = this.map.getZoom();
-    const lat = this.map.getCenter().lat;
-    const metersPerPixel = (Math.cos(lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
+    const center = this.map.getCenter();
+    const metersPerPixel = (Math.cos(center.lat * Math.PI / 180) * 2 * Math.PI * APP_CONFIG.EARTH_RADIUS_METERS) / (APP_CONFIG.TILE_SIZE * Math.pow(2, zoom));
     const pixelsPerMeter = 1 / metersPerPixel;
     
-    const radius = Math.max(5, (this.meterRadius * APP_CONFIG.HEATMAP_RADIUS_MULTIPLIER) * pixelsPerMeter);
+    // Scaling radius similar to FogLayer
+    const baseRadiusMeters = this.meterRadius * APP_CONFIG.HEATMAP_RADIUS_MULTIPLIER;
+    const effectiveMeterRadius = Math.max(baseRadiusMeters, this.detailMeters * 0.707);
+    const radius = Math.max(5, effectiveMeterRadius * pixelsPerMeter);
 
     this.ctx.globalAlpha = APP_CONFIG.HEATMAP_OPACITY;
     this.ctx.globalCompositeOperation = 'screen';
 
+    let drawnCount = 0;
     for (const p of this.points) {
       // Per user request: visits (1) should not have a color at all.
       if (p.visits < 2) continue;
@@ -136,10 +153,12 @@ export class HeatmapLayer {
 
       this.ctx.fillStyle = gradient;
       this.ctx.fillRect(pos.x - radius, pos.y - radius, radius * 2, radius * 2);
+      drawnCount++;
     }
 
     this.ctx.globalAlpha = 1.0;
     this.ctx.globalCompositeOperation = 'source-over';
+    console.log(`HeatmapLayer: Draw complete. Points rendered: ${drawnCount}/${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);
   }
 
   public destroy() {

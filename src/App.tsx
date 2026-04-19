@@ -55,7 +55,6 @@ function App() {
     loading,
     setLoading,
     importStatus,
-    setImportStatus,
     showImportModal,
     handleFileSelect,
     startImport,

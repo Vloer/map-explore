@@ -15,7 +15,8 @@ export const APP_CONFIG = {
   RADIUS_SLIDER_STEP: 5,
 
   // Snapping / Grid settings (meters)
-  DETAIL_RADIUS_METERS: 20,
+  DETAIL_RADIUS_METERS: 5,
+  IMPORT_DECIMATION_METERS: 5,
 
   // Heatmap settings
   HEATMAP_MAX_VISITS: 50,

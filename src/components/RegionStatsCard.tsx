@@ -1,4 +1,3 @@
-import React from 'react';
 import type { RegionStats } from '../types';
 
 interface RegionStatsCardProps {

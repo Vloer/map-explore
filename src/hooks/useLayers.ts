@@ -3,7 +3,6 @@ import maplibregl from 'maplibre-gl';
 import { FogLayer } from '../FogLayer';
 import { HeatmapLayer } from '../HeatmapLayer';
 import { databaseService } from '../DatabaseService';
-import { APP_CONFIG } from '../Config';
 
 export function useLayers(map: React.MutableRefObject<maplibregl.Map | null>, isMapReady: boolean) {
   const fogLayer = useRef<FogLayer | null>(null);
