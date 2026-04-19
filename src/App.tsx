@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useMap } from './hooks/useMap';
 import { useLayers } from './hooks/useLayers';
 import { useLocationSearch } from './hooks/useLocationSearch';
@@ -21,7 +21,8 @@ function App() {
     refreshLayers, 
     updateFogRadius, 
     updateHeatmapStrength, 
-    toggleHeatmap: toggleHeatmapLayer 
+    toggleHeatmap: toggleHeatmapLayer,
+    setHighlight
   } = useLayers(map, isMapReady);
   
   const { 
@@ -30,7 +31,8 @@ function App() {
     isSearching, 
     regionStats, 
     setRegionStats,
-    handleSearch 
+    handleSearch,
+    reverseGeocode
   } = useLocationSearch(map);
 
   const [fogRadius, setFogRadius] = useState(APP_CONFIG.BASE_FOG_REVEAL_RADIUS);
@@ -39,6 +41,11 @@ function App() {
 
   const { explorationPercentage } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
+
+  // Sync regionStats with FogLayer highlight
+  useEffect(() => {
+    setHighlight(regionStats?.geojson || null);
+  }, [regionStats, setHighlight]);
 
   const onImportComplete = () => {
     refreshLayers();
@@ -56,6 +63,20 @@ function App() {
     onButtonClick,
     fileInputRef
   } = useImport(onImportComplete);
+
+  // Handle map click for reverse geocoding
+  useEffect(() => {
+    if (!isMapReady || !map.current) return;
+
+    const onClick = (e: maplibregl.MapMouseEvent) => {
+      reverseGeocode(e.lngLat.lat, e.lngLat.lng);
+    };
+
+    map.current.on('click', onClick);
+    return () => {
+      map.current?.off('click', onClick);
+    };
+  }, [isMapReady, map, reverseGeocode]);
 
   const handleRadiusChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value);
@@ -82,8 +103,6 @@ function App() {
       await databaseService.clearDatabase();
       refreshLayers();
       setRegionStats(null);
-      const source = map.current?.getSource('region-highlight') as maplibregl.GeoJSONSource;
-      if (source) source.setData({ type: 'FeatureCollection', features: [] });
       alert("Database cleared.");
     } finally {
       setLoading(false);

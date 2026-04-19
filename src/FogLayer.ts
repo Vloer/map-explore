@@ -10,6 +10,7 @@ export class FogLayer {
   private db: DatabaseService;
   private resizeObserver: ResizeObserver;
   private points: LocationPoint[] = [];
+  private highlightGeoJSON: any = null;
   private isDrawing = false;
   
   public meterRadius: number = APP_CONFIG.BASE_FOG_REVEAL_RADIUS; 
@@ -79,6 +80,11 @@ export class FogLayer {
     this.scheduleDraw();
   }
 
+  public setHighlight(geojson: any) {
+    this.highlightGeoJSON = geojson;
+    this.scheduleDraw();
+  }
+
   private scheduleDraw() {
     if (this.isDrawing) return;
     this.isDrawing = true;
@@ -103,43 +109,76 @@ export class FogLayer {
     this.ctx.fillStyle = APP_CONFIG.FOG_COLOR; 
     this.ctx.fillRect(0, 0, width, height);
 
-    if (this.points.length === 0) return;
-
-    this.ctx.globalCompositeOperation = 'destination-out';
-    
-    const pixelsPerMeter = this.getPixelsPerMeter(center.lat, zoom);
-    const radius = Math.max(3, this.meterRadius * pixelsPerMeter);
-
-    let visiblePoints = 0;
-    let drawnPoints = 0;
-    
-    let lastX = -9999;
-    let lastY = -9999;
-    const minPixelDistSq = 4; // 2 pixels distance
-
-    this.ctx.beginPath();
-    for (const p of this.points) {
-      const pos = this.map.project([p.lng, p.lat]);
+    if (this.points.length > 0) {
+      this.ctx.globalCompositeOperation = 'destination-out';
       
-      if (pos.x < -radius || pos.x > width + radius || pos.y < -radius || pos.y > height + radius) {
-        continue;
-      }
-      visiblePoints++;
+      const pixelsPerMeter = this.getPixelsPerMeter(center.lat, zoom);
+      const radius = Math.max(3, this.meterRadius * pixelsPerMeter);
 
-      const dx = pos.x - lastX;
-      const dy = pos.y - lastY;
-      if (dx * dx + dy * dy < minPixelDistSq) {
-        continue;
-      }
+      let lastX = -9999;
+      let lastY = -9999;
+      const minPixelDistSq = 4; // 2 pixels distance
 
-      this.ctx.moveTo(pos.x + radius, pos.y);
-      this.ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-      
-      lastX = pos.x;
-      lastY = pos.y;
-      drawnPoints++;
+      this.ctx.beginPath();
+      for (const p of this.points) {
+        const pos = this.map.project([p.lng, p.lat]);
+        
+        if (pos.x < -radius || pos.x > width + radius || pos.y < -radius || pos.y > height + radius) {
+          continue;
+        }
+
+        const dx = pos.x - lastX;
+        const dy = pos.y - lastY;
+        if (dx * dx + dy * dy < minPixelDistSq) {
+          continue;
+        }
+
+        this.ctx.moveTo(pos.x + radius, pos.y);
+        this.ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+        
+        lastX = pos.x;
+        lastY = pos.y;
+      }
+      this.ctx.fill();
     }
-    this.ctx.fill();
+
+    // Draw highlight polygon on top
+    if (this.highlightGeoJSON) {
+      this.ctx.globalCompositeOperation = 'source-over';
+      this.ctx.strokeStyle = '#00E5FF'; // Vibrant Cyan
+      this.ctx.lineWidth = 4;
+      this.ctx.lineJoin = 'round';
+      this.ctx.shadowBlur = 10;
+      this.ctx.shadowColor = '#00E5FF';
+      
+      const drawCoords = (coords: any[]) => {
+        this.ctx.beginPath();
+        coords.forEach((coord, i) => {
+          const pos = this.map.project([coord[0], coord[1]]);
+          if (i === 0) this.ctx.moveTo(pos.x, pos.y);
+          else this.ctx.lineTo(pos.x, pos.y);
+        });
+        this.ctx.stroke();
+      };
+
+      const processGeometry = (geometry: any) => {
+        if (geometry.type === 'Polygon') {
+          geometry.coordinates.forEach(drawCoords);
+        } else if (geometry.type === 'MultiPolygon') {
+          geometry.coordinates.forEach((poly: any[]) => poly.forEach(drawCoords));
+        }
+      };
+
+      if (this.highlightGeoJSON.type === 'Feature') {
+        processGeometry(this.highlightGeoJSON.geometry);
+      } else if (this.highlightGeoJSON.type === 'FeatureCollection') {
+        this.highlightGeoJSON.features.forEach((f: any) => processGeometry(f.geometry));
+      } else {
+        processGeometry(this.highlightGeoJSON);
+      }
+      
+      this.ctx.shadowBlur = 0; // Reset shadow
+    }
   }
 
   public destroy() {

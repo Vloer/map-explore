@@ -49,3 +49,22 @@ export const APP_CONFIG = {
   SQLITE_PAGE_SIZE: 8192,
   NEAREST_QUERY_LIMIT: 200,
 };
+
+export const PLACE_TYPES: { [key: string]: number } = {
+  river: 99,
+  water: 99,
+  industrial: 99,
+  railway: 99,
+  building: 99,
+  road: 99,
+  man_made: 99,
+  country: 9,
+  state: 8,
+  region: 7,
+  province: 6,
+  county: 5,
+  municipality: 4,
+  city: 3,
+  town: 2,
+  village: 1,
+};
