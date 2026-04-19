@@ -164,36 +164,81 @@ export class FogLayer {
     // Draw highlight polygon on top
     if (this.highlightGeoJSON) {
       this.ctx.globalCompositeOperation = 'source-over';
-      this.ctx.strokeStyle = '#00E5FF';
-      this.ctx.lineWidth = 4;
+      this.ctx.lineCap = 'round';
       this.ctx.lineJoin = 'round';
-      this.ctx.shadowBlur = 10;
-      this.ctx.shadowColor = '#00E5FF';
       
-      const drawCoords = (coords: any[]) => {
+      const drawCoords = (coords: any[], color: string, width: number, blur: number) => {
+        if (!coords || coords.length === 0) return;
+        
         this.ctx.beginPath();
-        coords.forEach((coord, i) => {
-          const pos = this.map.project([coord[0], coord[1]]);
-          if (i === 0) this.ctx.moveTo(pos.x, pos.y);
-          else this.ctx.lineTo(pos.x, pos.y);
-        });
-        this.ctx.stroke();
-      };
+        this.ctx.strokeStyle = color;
+        this.ctx.lineWidth = width;
+        
+        if (blur > 0) {
+          this.ctx.shadowBlur = blur;
+          this.ctx.shadowColor = color;
+        } else {
+          this.ctx.shadowBlur = 0;
+        }
 
-      const processGeometry = (geometry: any) => {
-        if (geometry.type === 'Polygon') {
-          geometry.coordinates.forEach(drawCoords);
-        } else if (geometry.type === 'MultiPolygon') {
-          geometry.coordinates.forEach((poly: any[]) => poly.forEach(drawCoords));
+        if (coords.length === 1) {
+          // Special case: Single point (common for PDOK centroids)
+          // Draw a small circle to make the highlight visible
+          const pos = this.map.project([coords[0][0], coords[0][1]]);
+          this.ctx.fillStyle = color;
+          this.ctx.arc(pos.x, pos.y, width / 2, 0, Math.PI * 2);
+          this.ctx.fill();
+        } else {
+          // Standard case: Multiple points (LineString)
+          coords.forEach((coord, i) => {
+            const pos = this.map.project([coord[0], coord[1]]);
+            if (i === 0) {
+              this.ctx.moveTo(pos.x, pos.y);
+            } else {
+              this.ctx.lineTo(pos.x, pos.y);
+            }
+          });
+          this.ctx.stroke();
         }
       };
 
+      const processGeometry = (geometry: any, type: string) => {
+        if (!geometry) return;
+        
+        const isStreet = type === 'street';
+        const baseColor = isStreet ? 'rgba(255, 255, 0, 1)' : 'rgba(0, 229, 255, 1)';
+        const glowColor = isStreet ? 'rgba(255, 255, 0, 0.4)' : 'rgba(0, 229, 255, 0.4)';
+        
+        const geometries = geometry.type === 'Polygon' ? [geometry.coordinates[0]] :
+                           geometry.type === 'MultiPolygon' ? geometry.coordinates.map((p: any) => p[0]) :
+                           geometry.type === 'LineString' ? [geometry.coordinates] :
+                           geometry.type === 'MultiLineString' ? geometry.coordinates : [];
+
+        geometries.forEach((coords: any[]) => {
+          if (isStreet) {
+            // Draw multi-layered glow for streets
+            drawCoords(coords, glowColor, 12, 10);
+            drawCoords(coords, glowColor, 8, 5);
+            drawCoords(coords, baseColor, 3, 0);
+          } else {
+            // Standard highlight for regions
+            drawCoords(coords, baseColor, 4, 10);
+          }
+        });
+      };
+
+      const processFeature = (feature: any) => {
+        if (!feature) return;
+        const type = feature.properties?.type || 'unknown';
+        processGeometry(feature.geometry || feature, type);
+      };
+
       if (this.highlightGeoJSON.type === 'Feature') {
-        processGeometry(this.highlightGeoJSON.geometry);
+        processFeature(this.highlightGeoJSON);
       } else if (this.highlightGeoJSON.type === 'FeatureCollection') {
-        this.highlightGeoJSON.features.forEach((f: any) => processGeometry(f.geometry));
+        this.highlightGeoJSON.features.forEach(processFeature);
       } else {
-        processGeometry(this.highlightGeoJSON);
+        processFeature({ geometry: this.highlightGeoJSON });
       }
       
       this.ctx.shadowBlur = 0; // Reset shadow

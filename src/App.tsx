@@ -16,7 +16,7 @@ import { Controls } from './components/Controls';
 import { ImportModal } from './components/ImportModal';
 import { Tooltip } from './components/Tooltip';
 import { HeatmapLegend } from './components/HeatmapLegend';
-import { StreetListModal } from './components/StreetListModal';
+import { StreetListPanel } from './components/StreetListPanel';
 
 function App() {
   const { mapContainer, map, isMapReady } = useMap();
@@ -41,7 +41,8 @@ function App() {
   const [fogRadius, setFogRadius] = useState(APP_CONFIG.BASE_FOG_REVEAL_RADIUS);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [heatmapStrength, setHeatmapStrength] = useState(Math.floor(APP_CONFIG.HEATMAP_MAX_VISITS / 2));
-  const [showStreetModal, setShowStreetModal] = useState(false);
+  const [showStreetPanel, setShowStreetPanel] = useState(false);
+  const [streetHighlight, setStreetHighlight] = useState<any>(null);
 
   const { explorationPercentage } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
@@ -49,13 +50,27 @@ function App() {
 
   // Sync regionStats with FogLayer highlight and load streets
   useEffect(() => {
-    setHighlight(regionStats?.geojson || null);
+    const features: any[] = [];
+    if (regionStats?.geojson) {
+      features.push({
+        type: 'Feature',
+        properties: { type: 'region' },
+        geometry: regionStats.geojson
+      });
+    }
+    if (streetHighlight) {
+      features.push(streetHighlight);
+    }
+    
+    setHighlight(features.length > 0 ? { type: 'FeatureCollection', features } : null);
+
     if (regionStats) {
       loadStreets(regionStats);
     } else {
       setStreets([]);
+      setStreetHighlight(null);
     }
-  }, [regionStats, setHighlight, loadStreets, setStreets]);
+  }, [regionStats, streetHighlight, setHighlight, loadStreets, setStreets]);
 
   const onImportComplete = () => {
     refreshLayers();
@@ -80,8 +95,26 @@ function App() {
       zoom: 17,
       essential: true
     });
-    
-    setShowStreetModal(false);
+
+    // Create a MultiLineString for the street highlight
+    const multiLine: number[][][] = [];
+    if (street.segments && street.segments.length > 0) {
+      street.segments.forEach(seg => {
+        multiLine.push(seg.coordinates.map(c => [c.lng, c.lat]));
+      });
+    } else {
+      // PDOK or simple coordinate streets
+      multiLine.push(street.coordinates.map(c => [c.lng, c.lat]));
+    }
+
+    setStreetHighlight({
+      type: 'Feature',
+      properties: { type: 'street', name: street.name },
+      geometry: {
+        type: 'MultiLineString',
+        coordinates: multiLine
+      }
+    });
   };
 
   const {
@@ -157,20 +190,21 @@ function App() {
           <RegionStatsCard 
             stats={regionStats} 
             percentage={explorationPercentage} 
-            onShowStreets={() => setShowStreetModal(true)}
+            onShowStreets={() => setShowStreetPanel(!showStreetPanel)}
+          />
+        )}
+
+        {regionStats && (
+          <StreetListPanel 
+            streets={streets} 
+            regionName={regionStats.name}
+            onStreetClick={handleStreetClick}
+            isVisible={showStreetPanel}
+            onToggle={() => setShowStreetPanel(false)}
+            isLoading={isLoadingStreets}
           />
         )}
       </div>
-
-      {showStreetModal && regionStats && (
-        <StreetListModal 
-          streets={streets} 
-          regionName={regionStats.name}
-          onStreetClick={handleStreetClick}
-          onClose={() => setShowStreetModal(false)}
-          isLoading={isLoadingStreets}
-        />
-      )}
 
       {tooltip && <Tooltip data={tooltip} />}
 
