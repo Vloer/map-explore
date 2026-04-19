@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import * as turf from '@turf/turf';
-import { databaseService } from '../DatabaseService';
+import { databaseService } from '../services/DatabaseService';
 import type { RegionStats } from '../types';
 
 export function useExplorationStats(regionStats: RegionStats | null, fogRadius: number) {

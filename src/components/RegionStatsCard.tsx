@@ -3,9 +3,10 @@ import type { RegionStats } from '../types';
 interface RegionStatsCardProps {
   stats: RegionStats;
   percentage: number;
+  onShowStreets: () => void;
 }
 
-export function RegionStatsCard({ stats, percentage }: RegionStatsCardProps) {
+export function RegionStatsCard({ stats, percentage, onShowStreets }: RegionStatsCardProps) {
   return (
     <div style={{
       background: 'rgba(255, 255, 255, 0.95)', padding: '15px',
@@ -17,8 +18,25 @@ export function RegionStatsCard({ stats, percentage }: RegionStatsCardProps) {
       <div style={{ height: '8px', width: '100%', background: '#eee', borderRadius: '4px', overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${percentage}%`, background: '#4CAF50', transition: 'width 0.8s ease' }} />
       </div>
-      <div style={{ fontSize: '12px', marginTop: '6px', textAlign: 'right', fontWeight: 'bold' }}>
-        {percentage.toFixed(2)}%
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+        <button 
+          onClick={onShowStreets}
+          style={{
+            background: '#2196F3',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            padding: '4px 8px',
+            fontSize: '11px',
+            cursor: 'pointer',
+            fontWeight: 'bold'
+          }}
+        >
+          Show Streets
+        </button>
+        <div style={{ fontSize: '12px', textAlign: 'right', fontWeight: 'bold' }}>
+          {percentage.toFixed(2)}%
+        </div>
       </div>
     </div>
   );

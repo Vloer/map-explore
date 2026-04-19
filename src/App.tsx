@@ -5,8 +5,10 @@ import { useLocationSearch } from './hooks/useLocationSearch';
 import { useExplorationStats } from './hooks/useExplorationStats';
 import { useImport } from './hooks/useImport';
 import { useMapEvents } from './hooks/useMapEvents';
-import { databaseService } from './DatabaseService';
+import { useStreets } from './hooks/useStreets';
+import { databaseService } from './services/DatabaseService';
 import { APP_CONFIG } from './Config';
+import type { Street } from './types';
 
 import { SearchBox } from './components/SearchBox';
 import { RegionStatsCard } from './components/RegionStatsCard';
@@ -14,6 +16,7 @@ import { Controls } from './components/Controls';
 import { ImportModal } from './components/ImportModal';
 import { Tooltip } from './components/Tooltip';
 import { HeatmapLegend } from './components/HeatmapLegend';
+import { StreetListModal } from './components/StreetListModal';
 
 function App() {
   const { mapContainer, map, isMapReady } = useMap();
@@ -38,17 +41,47 @@ function App() {
   const [fogRadius, setFogRadius] = useState(APP_CONFIG.BASE_FOG_REVEAL_RADIUS);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
   const [heatmapStrength, setHeatmapStrength] = useState(Math.floor(APP_CONFIG.HEATMAP_MAX_VISITS / 2));
+  const [showStreetModal, setShowStreetModal] = useState(false);
 
   const { explorationPercentage } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
+  const { streets, isLoading: isLoadingStreets, loadStreets, setStreets } = useStreets();
 
-  // Sync regionStats with FogLayer highlight
+  // Sync regionStats with FogLayer highlight and load streets
   useEffect(() => {
     setHighlight(regionStats?.geojson || null);
-  }, [regionStats, setHighlight]);
+    if (regionStats) {
+      loadStreets(regionStats);
+    } else {
+      setStreets([]);
+    }
+  }, [regionStats, setHighlight, loadStreets, setStreets]);
 
   const onImportComplete = () => {
     refreshLayers();
+  };
+
+  const handleStreetClick = (street: Street) => {
+    if (!map.current || !street.coordinates || street.coordinates.length === 0) return;
+    
+    // Calculate center of the street
+    let sumLat = 0;
+    let sumLng = 0;
+    street.coordinates.forEach(c => {
+      sumLat += c.lat;
+      sumLng += c.lng;
+    });
+    
+    const centerLat = sumLat / street.coordinates.length;
+    const centerLng = sumLng / street.coordinates.length;
+    
+    map.current.flyTo({
+      center: [centerLng, centerLat],
+      zoom: 17,
+      essential: true
+    });
+    
+    setShowStreetModal(false);
   };
 
   const {
@@ -121,9 +154,23 @@ function App() {
         />
 
         {regionStats && (
-          <RegionStatsCard stats={regionStats} percentage={explorationPercentage} />
+          <RegionStatsCard 
+            stats={regionStats} 
+            percentage={explorationPercentage} 
+            onShowStreets={() => setShowStreetModal(true)}
+          />
         )}
       </div>
+
+      {showStreetModal && regionStats && (
+        <StreetListModal 
+          streets={streets} 
+          regionName={regionStats.name}
+          onStreetClick={handleStreetClick}
+          onClose={() => setShowStreetModal(false)}
+          isLoading={isLoadingStreets}
+        />
+      )}
 
       {tooltip && <Tooltip data={tooltip} />}
 

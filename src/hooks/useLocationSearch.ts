@@ -8,6 +8,14 @@ export function useLocationSearch(map: React.MutableRefObject<maplibregl.Map | n
   const [isSearching, setIsSearching] = useState(false);
   const [regionStats, setRegionStats] = useState<RegionStats | null>(null);
 
+  const checkIfSamePlace = (newResult: any, current: RegionStats | null): boolean => {
+    if (!current) return false;
+    // Nominatim returns osm_id and osm_type
+    const sameId = newResult.osm_id && Number(newResult.osm_id) === current.osmId;
+    const sameType = newResult.osm_type && newResult.osm_type === current.osmType;
+    return sameId && sameType;
+  };
+
   const handleSearch = async (e?: React.FormEvent, overrideQuery?: string) => {
     e?.preventDefault();
     const query = overrideQuery || searchQuery;
@@ -27,15 +35,26 @@ export function useLocationSearch(map: React.MutableRefObject<maplibregl.Map | n
         });
 
         const place = sortedResults[0];
-        const [minLat, maxLat, minLng, maxLng] = place.boundingbox.map(Number);
 
+        // Check if we are already in this place
+        if (checkIfSamePlace(place, regionStats)) {
+          console.info(`LocationSearch: Already in ${place.display_name.split(',')[0]}, skipping reload.`);
+          // Still fit bounds in case user panned away
+          const [minLat, maxLat, minLng, maxLng] = place.boundingbox.map(Number);
+          map.current.fitBounds([minLng, minLat, maxLng, maxLat], { padding: 50 });
+          return;
+        }
+
+        const [minLat, maxLat, minLng, maxLng] = place.boundingbox.map(Number);
         map.current.fitBounds([minLng, minLat, maxLng, maxLat], { padding: 50 });
 
         setRegionStats({
           name: place.display_name.split(',')[0],
           type: place.addresstype || place.type || place.class,
           geojson: place.geojson,
-          bounds: [minLat, maxLat, minLng, maxLng]
+          bounds: [minLat, maxLat, minLng, maxLng],
+          osmId: place.osm_id ? Number(place.osm_id) : undefined,
+          osmType: place.osm_type
         });
 
       } else {
@@ -77,17 +96,29 @@ export function useLocationSearch(map: React.MutableRefObject<maplibregl.Map | n
           if (addr.country) searchParts.push(addr.country);
           
           const newQuery = searchParts.join(', ');
+          
+          // Before triggering a full search, check if this parent place matches current
+          // This is a bit tricky since Nominatim reverse might not return same IDs as search.
+          // But handleSearch will do its own check once it gets results.
+          
           setSearchQuery(newQuery);
           await handleSearch(undefined, newQuery);
           return;
         }
 
-        // Fallback to the original result if no weighted place was found
+        // Fallback if no weighted place was found
+        if (checkIfSamePlace(result, regionStats)) {
+          console.info("LocationSearch: Already in this place (reverse geocode), skipping.");
+          return;
+        }
+
         setRegionStats({
           name: result.display_name.split(',')[0],
           type: result.addresstype || result.type || result.class,
           geojson: result.geojson,
-          bounds: result.boundingbox.map(Number)
+          bounds: result.boundingbox.map(Number),
+          osmId: result.osm_id ? Number(result.osm_id) : undefined,
+          osmType: result.osm_type
         });
       }
     } catch (err) {

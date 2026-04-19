@@ -1,4 +1,5 @@
 import { APP_CONFIG } from "./Config";
+import type { BoundingBox } from "./types";
 
 /**
  * Converts meters to approximate E7 coordinate units.
@@ -20,4 +21,19 @@ export function getDistanceE7(latE7_1: number, lngE7_1: number, latE7_2: number,
   const dLng = (lngE7_2 - lngE7_1) * cosLat;
   const distE7 = Math.sqrt(dLat * dLat + dLng * dLng);
   return (distE7 / 1e7) * 111111;
+}
+
+/**
+ * Formats a bounding box for use in API queries.
+ */
+export function bboxToString(bbox: BoundingBox): string {
+  return `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
+}
+
+/**
+ * Capitalizes the first letter of a string.
+ */
+export function capitalize(s: string): string {
+  if (!s) return "";
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

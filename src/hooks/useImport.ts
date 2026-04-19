@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { databaseService } from '../DatabaseService';
+import { databaseService } from '../services/DatabaseService';
 import type { ImportOptions, TimelineData } from '../types';
 
 export function useImport(onImportComplete: () => void) {

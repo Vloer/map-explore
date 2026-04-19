@@ -1,3 +1,56 @@
+export interface PlaceFromPoint {
+  name: string;
+  place_type: string;
+}
+
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
+export interface BoundingBox {
+  south: number;
+  north: number;
+  west: number;
+  east: number;
+  toString?: () => string;
+}
+
+export interface Node {
+  id: number;
+  lat: number;
+  lng: number;
+}
+
+export interface StreetSegment {
+  id: number;
+  name: string;
+  place: string;
+  street_type: string;
+  nodes: number[];
+  coordinates: Node[];
+}
+
+export interface Street {
+  name: string;
+  place: string;
+  street_type: string;
+  segments: StreetSegment[];
+  visited: boolean;
+  coordinates: Node[];
+}
+
+export interface PlaceGeoData {
+  name: string;
+  display_name: string;
+  lat: number;
+  lng: number;
+  place_type: string;
+  bounding_box: BoundingBox;
+  bounding_polygon: number[][];
+  streets: Street[];
+}
+
 export interface LocationPoint {
   lat: number;
   lng: number;
@@ -16,6 +69,8 @@ export interface RegionStats {
   type: string;
   geojson: any;
   bounds: [number, number, number, number]; // [minLat, maxLat, minLng, maxLng]
+  osmId?: number;
+  osmType?: string;
 }
 
 export interface ImportOptions {

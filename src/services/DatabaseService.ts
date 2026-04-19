@@ -3,9 +3,9 @@ import * as SQLite from 'wa-sqlite';
 import SQLiteESMFactory from 'wa-sqlite/dist/wa-sqlite-async.mjs';
 // @ts-ignore
 import { IDBBatchAtomicVFS } from 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
-import { APP_CONFIG } from './Config';
-import { metersToE7, getDistanceE7 } from './Util';
-import type { TimelineData, ImportOptions } from './types';
+import { APP_CONFIG } from '../Config';
+import { metersToE7, getDistanceE7 } from '../Util';
+import type { TimelineData, ImportOptions } from '../types';
 
 interface InternalLocationPoint {
   latE7: number;
@@ -90,14 +90,66 @@ export class DatabaseService {
           visit_count = visit_count + 1,
           latest_timestamp = MAX(latest_timestamp, excluded.latest_timestamp);
       END;
+
+      CREATE TABLE IF NOT EXISTS streets_cache (
+        osm_id INTEGER,
+        osm_type TEXT,
+        streets_json TEXT,
+        last_updated INTEGER,
+        PRIMARY KEY (osm_id, osm_type)
+      );
     `);
   }
 
   async clearDatabase() {
     return this.withLock(async () => {
       if (!this.db) return;
-      await this.sqlite3.exec(this.db, "DELETE FROM signals; DELETE FROM locations; VACUUM;");
+      await this.sqlite3.exec(this.db, "DELETE FROM signals; DELETE FROM locations; DELETE FROM streets_cache; VACUUM;");
       console.log("DatabaseService: Database cleared.");
+    });
+  }
+
+  async getStreetsCache(osmId: number, osmType: string): Promise<{ streets: any[], lastUpdated: number } | null> {
+    if (!this.db) return null;
+    return this.withLock(async () => {
+      let result: { streets: any[], lastUpdated: number } | null = null;
+      const sql = `SELECT streets_json, last_updated FROM streets_cache WHERE osm_id = ? AND osm_type = ?`;
+      try {
+        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
+          this.sqlite3.bind_int64(stmt, 1, BigInt(osmId));
+          this.sqlite3.bind_text(stmt, 2, osmType);
+          if (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
+            const json = this.sqlite3.column_text(stmt, 0);
+            const lastUpdated = Number(this.sqlite3.column_int64(stmt, 1));
+            result = {
+              streets: JSON.parse(json),
+              lastUpdated
+            };
+          }
+        }
+      } catch (e) {
+        console.error("DatabaseService: Cache lookup error", e);
+      }
+      return result;
+    });
+  }
+
+  async saveStreetsCache(osmId: number, osmType: string, streets: any[]) {
+    if (!this.db) return;
+    return this.withLock(async () => {
+      const sql = `INSERT OR REPLACE INTO streets_cache (osm_id, osm_type, streets_json, last_updated) VALUES (?, ?, ?, ?)`;
+      try {
+        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
+          this.sqlite3.bind_int64(stmt, 1, BigInt(osmId));
+          this.sqlite3.bind_text(stmt, 2, osmType);
+          this.sqlite3.bind_text(stmt, 3, JSON.stringify(streets));
+          this.sqlite3.bind_int64(stmt, 4, BigInt(Date.now()));
+          await this.sqlite3.step(stmt);
+        }
+        console.debug(`Saved streets data: ${osmType} ${osmId}`)
+      } catch (e) {
+        console.error("DatabaseService: Cache save error", e);
+      }
     });
   }
 
@@ -284,36 +336,6 @@ export class DatabaseService {
     });
   }
 
-  async getPointsCountInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number): Promise<number> {
-    if (!this.db) return 0;
-
-    return this.withLock(async () => {
-      let count = 0;
-      const minLatE7 = Math.round(minLat * 1e7);
-      const maxLatE7 = Math.round(maxLat * 1e7);
-      const minLngE7 = Math.round(minLng * 1e7);
-      const maxLngE7 = Math.round(maxLng * 1e7);
-
-      const sql = `SELECT COUNT(*) FROM locations WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?`;
-      
-      try {
-        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          this.sqlite3.bind_int(stmt, 1, minLatE7);
-          this.sqlite3.bind_int(stmt, 2, maxLatE7);
-          this.sqlite3.bind_int(stmt, 3, minLngE7);
-          this.sqlite3.bind_int(stmt, 4, maxLngE7);
-
-          if (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
-            count = this.sqlite3.column_int(stmt, 0);
-          }
-        }
-      } catch (e) {
-        console.error("DatabaseService: Count query error", e);
-      }
-      return count;
-    });
-  }
-
   async getNearestPoint(lat: number, lng: number, radiusDegrees: number): Promise<{lat: number, lng: number, timestamp: number, visits: number} | null> {
     if (!this.db) return null;
 
@@ -358,13 +380,6 @@ export class DatabaseService {
         console.error("DatabaseService: Nearest query error", e);
       }
       return nearest;
-    });
-  }
-
-  async debugLogSample() {
-    if (!this.db) return;
-    await this.sqlite3.exec(this.db, 'SELECT lat_e7, lng_e7, visit_count FROM locations LIMIT 5', (row: any[]) => {
-      console.log("DB Sample:", row[0]/1e7, row[1]/1e7, "Visits:", row[2]);
     });
   }
 }

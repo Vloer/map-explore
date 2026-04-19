@@ -1,5 +1,5 @@
 import maplibregl from 'maplibre-gl';
-import { DatabaseService } from './DatabaseService';
+import { DatabaseService } from './services/DatabaseService';
 import { APP_CONFIG } from './Config';
 import type { LocationPoint } from './types';
 

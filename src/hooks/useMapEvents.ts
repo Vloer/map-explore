@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import { databaseService } from '../DatabaseService';
+import { databaseService } from '../services/DatabaseService';
 import { APP_CONFIG } from '../Config';
 import type { TooltipData } from '../types';
 
