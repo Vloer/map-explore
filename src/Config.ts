@@ -9,7 +9,7 @@ export const APP_CONFIG = {
   MAP_STYLE: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
 
   // Reveal radius settings (meters)
-  BASE_FOG_REVEAL_RADIUS: 25,
+  BASE_FOG_REVEAL_RADIUS: 100,
   MAX_FOG_REVEAL_RADIUS: 150,
   MIN_FOG_REVEAL_RADIUS: 5,
   RADIUS_SLIDER_STEP: 5,
@@ -20,8 +20,10 @@ export const APP_CONFIG = {
 
   // Heatmap settings
   HEATMAP_MAX_VISITS: 50,
+  HEATMAP_STARTING_SENSITIVITY: 5,
   HEATMAP_RADIUS_MULTIPLIER: 1.5,
-  HEATMAP_OPACITY: 0.45,
+  HEATMAP_DETAIL_METERS: 0,
+  HEATMAP_OPACITY: 0.35,
   HEATMAP_HUE_START: 120, // Green
   HEATMAP_HUE_END: 0,     // Red
   

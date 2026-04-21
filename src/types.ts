@@ -73,11 +73,6 @@ export interface RegionStats {
   osmType?: string;
 }
 
-export interface ImportOptions {
-  includeRawSignals: boolean;
-  includeSemanticSegments: boolean;
-}
-
 export interface TimelineData {
   rawSignals?: Array<{
     position?: {

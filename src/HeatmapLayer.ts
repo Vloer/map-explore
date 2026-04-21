@@ -17,6 +17,7 @@ export class HeatmapLayer {
   private points: LocationPoint[] = [];
   private isDrawing = false;
   private enabled = false;
+  private detailMeters = APP_CONFIG.HEATMAP_DETAIL_METERS;
   
   /** The radius in meters for each heatmap point. */
   public meterRadius: number = APP_CONFIG.BASE_FOG_REVEAL_RADIUS;
@@ -88,8 +89,6 @@ export class HeatmapLayer {
     this.canvas.style.display = enabled ? 'block' : 'none';
     if (enabled) this.refreshData();
   }
-
-  private detailMeters: number = 0;
 
   /**
    * Refreshes the location points from the database based on the current map view.

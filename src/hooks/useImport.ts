@@ -1,10 +1,11 @@
 import { useState, useRef } from 'react';
-import { databaseService } from '../services/DatabaseService';
-import type { ImportOptions, TimelineData } from '../types';
+import { importService } from '../services/ImportService';
+import type { TimelineData } from '../types';
 
 /**
  * Hook to manage the location history import process.
  * Handles file selection, parsing, and transactional database import.
+ * Supports both Google Timeline (JSON) and GPX formats.
  * 
  * @param {() => void} onImportComplete Callback executed after a successful import.
  * @returns {object} Import state and control functions.
@@ -12,63 +13,47 @@ import type { ImportOptions, TimelineData } from '../types';
 export function useImport(onImportComplete: () => void) {
   const [loading, setLoading] = useState(false);
   const [importStatus, setImportStatus] = useState('');
-  const [pendingData, setPendingData] = useState<TimelineData | null>(null);
-  const [showImportModal, setShowImportModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /**
-   * Handles the selection of a JSON file and parses its contents.
+   * Handles the selection of a file and parses its contents.
    * @param {React.ChangeEvent<HTMLInputElement>} event The file input change event.
    */
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    
     setLoading(true);
+    const fileName = file.name.toLowerCase();
     const reader = new FileReader();
+    
     reader.onload = async (e) => {
       try {
         const text = e.target?.result as string;
-        const data = JSON.parse(text);
-        setPendingData(data);
-        setShowImportModal(true);
+        
+        if (fileName.endsWith('.json')) {
+          const data = JSON.parse(text);
+          setImportStatus('Importing JSON...');
+          await importService.importGoogleHistory(data as TimelineData);
+        } else if (fileName.endsWith('.gpx')) {
+          setImportStatus('Importing GPX...');
+          await importService.importGpx(text);
+        } else {
+          throw new Error("Unsupported file format");
+        }
+        
+        setImportStatus('Import complete!');
+        onImportComplete();
       } catch (err) {
+        console.error("useImport: File parsing or import failed", err);
+        setImportStatus('Error importing file.');
+      } finally {
         setLoading(false);
-        setImportStatus('Error parsing file.');
       }
     };
+    
     reader.readAsText(file);
     event.target.value = '';
-  };
-
-  /**
-   * Starts the database import process with the provided options.
-   * @param {ImportOptions} options Configuration for the import.
-   */
-  const startImport = async (options: ImportOptions) => {
-    if (!pendingData) return;
-    setShowImportModal(false);
-    setLoading(true);
-    setImportStatus('Importing...');
-    try {
-      await databaseService.importGoogleHistory(pendingData, options);
-      setImportStatus('Import complete!');
-      setPendingData(null);
-      onImportComplete();
-    } catch (err) {
-      setImportStatus('Error importing.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * Cancels the current import process and resets state.
-   */
-  const cancelImport = () => {
-    setShowImportModal(false);
-    setLoading(false);
-    setImportStatus('');
-    setPendingData(null);
   };
 
   /**
@@ -81,13 +66,8 @@ export function useImport(onImportComplete: () => void) {
     setLoading,
     importStatus,
     setImportStatus,
-    showImportModal,
-    setShowImportModal,
     fileInputRef,
     handleFileSelect,
-    startImport,
-    cancelImport,
     onButtonClick
   };
 }
-

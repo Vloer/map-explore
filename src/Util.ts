@@ -87,3 +87,13 @@ export function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/**
+ * Snaps an E7 coordinate to the grid based on the configured detail radius.
+ * @param {number} val The E7 coordinate value.
+ * @returns {number} The snapped E7 coordinate value.
+ */
+export function snap(val: number): number {
+  const s = metersToE7(APP_CONFIG.DETAIL_RADIUS_METERS);
+  return Math.round(val / s) * s;
+}
+

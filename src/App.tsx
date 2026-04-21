@@ -14,7 +14,6 @@ import type { Street } from './types';
 import { SearchBox } from './components/SearchBox';
 import { RegionStatsCard } from './components/RegionStatsCard';
 import { Controls } from './components/Controls';
-import { ImportModal } from './components/ImportModal';
 import { Tooltip } from './components/Tooltip';
 import { HeatmapLegend } from './components/HeatmapLegend';
 import { StreetListPanel } from './components/StreetListPanel';
@@ -47,7 +46,7 @@ function App() {
 
   const [fogRadius, setFogRadius] = useState(APP_CONFIG.BASE_FOG_REVEAL_RADIUS);
   const [heatmapEnabled, setHeatmapEnabled] = useState(false);
-  const [heatmapStrength, setHeatmapStrength] = useState(Math.floor(APP_CONFIG.HEATMAP_MAX_VISITS / 2));
+  const [heatmapStrength, setHeatmapStrength] = useState(APP_CONFIG.HEATMAP_STARTING_SENSITIVITY);
   const [showStreetPanel, setShowStreetPanel] = useState(false);
   const [streetHighlight, setStreetHighlight] = useState<any>(null);
 
@@ -98,14 +97,10 @@ function App() {
 
   const {
     loading,
-    setLoading,
     importStatus,
-    showImportModal,
+    fileInputRef,
     handleFileSelect,
-    startImport,
-    cancelImport,
-    onButtonClick,
-    fileInputRef
+    onButtonClick
   } = useImport(onImportComplete);
 
   useEffect(() => {
@@ -135,14 +130,13 @@ function App() {
 
   const clearDatabase = async () => {
     if (!window.confirm("Delete all data?")) return;
-    setLoading(true);
     try {
       await databaseService.clearDatabase();
       refreshLayers();
       setRegionStats(null);
       alert("Database cleared.");
-    } finally {
-      setLoading(false);
+    } catch (err) {
+      console.error("Clear database failed", err);
     }
   };
 
@@ -180,7 +174,6 @@ function App() {
 
       {tooltip && <Tooltip data={tooltip} />}
       {heatmapEnabled && <HeatmapLegend heatmapStrength={heatmapStrength} />}
-      {showImportModal && <ImportModal onStart={startImport} onCancel={cancelImport} />}
 
       <Controls 
         fogRadius={fogRadius}
@@ -195,7 +188,7 @@ function App() {
         importStatus={importStatus}
       />
       
-      <input type="file" accept=".json" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
+      <input type="file" accept=".json,.gpx" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
     </div>
   );
 }

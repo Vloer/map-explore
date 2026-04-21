@@ -4,13 +4,15 @@ import SQLiteESMFactory from 'wa-sqlite/dist/wa-sqlite-async.mjs';
 // @ts-ignore
 import { IDBBatchAtomicVFS } from 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
 import { APP_CONFIG } from '../Config';
-import { metersToE7, getDistanceE7 } from '../Util';
-import type { TimelineData, ImportOptions } from '../types';
+import { metersToE7, snap } from '../Util';
 
-interface InternalLocationPoint {
+/**
+ * Represents a processed signal point to be inserted into the database.
+ */
+export interface SignalPoint {
   latE7: number;
   lngE7: number;
-  timestamp: string;
+  timestamp: number;
 }
 
 /**
@@ -36,12 +38,27 @@ export class DatabaseService {
    * Helper to ensure database operations are serialized.
    * @param {() => Promise<T>} fn The function to execute.
    * @returns {Promise<T>}
-   * @private
    */
-  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
+  async withLock<T>(fn: () => Promise<T>): Promise<T> {
     const nextLock = this.lock.then(fn);
     this.lock = nextLock.then(() => {}, () => {});
     return nextLock;
+  }
+
+  /**
+   * Returns the underlying sqlite3 instance.
+   * @returns {any}
+   */
+  getSqlite3() {
+    return this.sqlite3;
+  }
+
+  /**
+   * Returns the database handle.
+   * @returns {number | null}
+   */
+  getDb() {
+    return this.db;
   }
 
   /**
@@ -174,167 +191,21 @@ export class DatabaseService {
    * @param {any[]} streets Array of street objects to cache.
    * @returns {Promise<void>}
    */
-  async saveStreetsCache(osmId: number, osmType: string, streets: any[]) {
+  async saveStreetsCache(osmId: number, osmIdVal: string, streets: any[]) {
     if (!this.db) return;
     return this.withLock(async () => {
       const sql = `INSERT OR REPLACE INTO streets_cache (osm_id, osm_type, streets_json, last_updated) VALUES (?, ?, ?, ?)`;
       try {
         for await (const stmt of this.sqlite3.statements(this.db, sql)) {
           this.sqlite3.bind_int64(stmt, 1, BigInt(osmId));
-          this.sqlite3.bind_text(stmt, 2, osmType);
+          this.sqlite3.bind_text(stmt, 2, osmIdVal);
           this.sqlite3.bind_text(stmt, 3, JSON.stringify(streets));
           this.sqlite3.bind_int64(stmt, 4, BigInt(Date.now()));
           await this.sqlite3.step(stmt);
         }
-        console.debug(`Saved streets data: ${osmType} ${osmId}`)
+        console.debug(`Saved streets data: ${osmIdVal} ${osmId}`)
       } catch (e) {
         console.error("DatabaseService: Cache save error", e);
-      }
-    });
-  }
-
-  /**
-   * Parses a lat,lng string into E7 integers.
-   * @param {string} s The "lat,lng" string.
-   * @returns {{latE7: number, lngE7: number} | null}
-   * @private
-   */
-  private parseLatLngToE7(s: string): {latE7: number, lngE7: number} | null {
-    try {
-      const parts = s.split(',');
-      if (parts.length !== 2) return null;
-      const lat = parseFloat(parts[0].replace(/[^\d.-]/g, ''));
-      const lng = parseFloat(parts[1].replace(/[^\d.-]/g, ''));
-      if (isNaN(lat) || isNaN(lng)) return null;
-      return {
-        latE7: Math.round(lat * 1e7),
-        lngE7: Math.round(lng * 1e7)
-      };
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /**
-   * Snaps an E7 coordinate to the grid.
-   * @param {number} val The E7 coordinate value.
-   * @returns {number} The snapped E7 coordinate value.
-   * @private
-   */
-  private snap(val: number): number {
-    const s = this.snapE7;
-    return Math.round(val / s) * s;
-  }
-
-  /**
-   * Imports Google Location History (Timeline) data into the database.
-   * @param {TimelineData} data The parsed timeline JSON data.
-   * @param {ImportOptions} options Configuration for the import.
-   * @returns {Promise<void>}
-   */
-  async importGoogleHistory(data: TimelineData, options: ImportOptions = { includeRawSignals: true, includeSemanticSegments: true }) {
-    return this.withLock(async () => {
-      console.log(`DatabaseService: Starting import (Raw: ${options.includeRawSignals}, Semantic: ${options.includeSemanticSegments})...`);
-      if (!this.db) throw new Error("Database not initialized");
-
-      const points: InternalLocationPoint[] = [];
-
-      if (options.includeRawSignals && data.rawSignals) {
-        let lastLatE7 = 0;
-        let lastLngE7 = 0;
-        for (const signal of data.rawSignals) {
-          if (signal.position?.LatLng && signal.position.timestamp) {
-            const coords = this.parseLatLngToE7(signal.position.LatLng);
-            if (coords) {
-              if (getDistanceE7(lastLatE7, lastLngE7, coords.latE7, coords.lngE7) > APP_CONFIG.IMPORT_DECIMATION_METERS) {
-                points.push({
-                  latE7: coords.latE7,
-                  lngE7: coords.lngE7,
-                  timestamp: signal.position.timestamp
-                });
-                lastLatE7 = coords.latE7;
-                lastLngE7 = coords.lngE7;
-              }
-            }
-          }
-        }
-      }
-
-      if (options.includeSemanticSegments && data.semanticSegments) {
-        let lastLatE7 = 0;
-        let lastLngE7 = 0;
-        for (const segment of data.semanticSegments) {
-          if (segment.timelinePath) {
-            for (const tp of segment.timelinePath) {
-              if (tp.point && tp.time) {
-                const coords = this.parseLatLngToE7(tp.point);
-                if (coords) {
-                  if (getDistanceE7(lastLatE7, lastLngE7, coords.latE7, coords.lngE7) > APP_CONFIG.IMPORT_DECIMATION_METERS) {
-                    points.push({ latE7: coords.latE7, lngE7: coords.lngE7, timestamp: tp.time });
-                    lastLatE7 = coords.latE7;
-                    lastLngE7 = coords.lngE7;
-                  }
-                }
-              }
-            }
-          }
-          const visitLoc = segment.visit?.topCandidate?.placeLocation?.latLng;
-          if (visitLoc && segment.startTime) {
-            const coords = this.parseLatLngToE7(visitLoc);
-            if (coords) {
-              if (getDistanceE7(lastLatE7, lastLngE7, coords.latE7, coords.lngE7) > APP_CONFIG.IMPORT_DECIMATION_METERS) {
-                points.push({ latE7: coords.latE7, lngE7: coords.lngE7, timestamp: segment.startTime });
-                lastLatE7 = coords.latE7;
-                lastLngE7 = coords.lngE7;
-              }
-            }
-          }
-        }
-      }
-
-      if (points.length === 0) {
-        console.warn("DatabaseService: No points found for import with current options.");
-        return;
-      }
-
-      await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
-
-      try {
-        let beforeSignalCount = 0;
-        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM signals', (row: any[]) => beforeSignalCount = row[0]);
-
-        const sql = `INSERT OR IGNORE INTO signals (lat_e7, lng_e7, timestamp) VALUES (?, ?, ?)`;
-        
-        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          for (const p of points) {
-            const ts = new Date(p.timestamp).getTime();
-            this.sqlite3.bind_int(stmt, 1, this.snap(p.latE7));
-            this.sqlite3.bind_int(stmt, 2, this.snap(p.lngE7));
-            this.sqlite3.bind_int64(stmt, 3, BigInt(ts));
-            await this.sqlite3.step(stmt);
-            this.sqlite3.reset(stmt);
-          }
-          break; 
-        }
-
-        await this.sqlite3.exec(this.db, 'COMMIT');
-        
-        let afterSignalCount = 0;
-        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM signals', (row: any[]) => afterSignalCount = row[0]);
-        
-        console.log(`DatabaseService: Signals before: ${beforeSignalCount}, after: ${afterSignalCount} (Added: ${afterSignalCount - beforeSignalCount})`);
-        
-        let finalLocationCount = 0;
-        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
-          finalLocationCount = row[0];
-        });
-        console.log(`DatabaseService: Import complete. Unique grid cells: ${finalLocationCount}`);
-        
-        await this.sqlite3.exec(this.db, 'VACUUM');
-      } catch (e) {
-        console.error("DatabaseService: Import error", e);
-        await this.sqlite3.exec(this.db, 'ROLLBACK');
-        throw e;
       }
     });
   }
@@ -457,7 +328,58 @@ export class DatabaseService {
       return nearest;
     });
   }
-}
 
+  /**
+   * Performs a bulk insert of signal points within a transaction.
+   * Handles snapping and deduplication via triggers.
+   * @param {SignalPoint[]} points Array of signal points to insert.
+   * @returns {Promise<void>}
+   */
+  async bulkInsertSignals(points: SignalPoint[]) {
+    if (!this.db || !this.sqlite3) throw new Error("Database not initialized");
+    if (points.length === 0) return;
+
+    return this.withLock(async () => {
+      await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
+
+      try {
+        let beforeSignalCount = 0;
+        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM signals', (row: any[]) => beforeSignalCount = row[0]);
+
+        const sql = `INSERT OR IGNORE INTO signals (lat_e7, lng_e7, timestamp) VALUES (?, ?, ?)`;
+        
+        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
+          for (const p of points) {
+            this.sqlite3.bind_int(stmt, 1, snap(p.latE7));
+            this.sqlite3.bind_int(stmt, 2, snap(p.lngE7));
+            this.sqlite3.bind_int64(stmt, 3, BigInt(p.timestamp));
+            await this.sqlite3.step(stmt);
+            this.sqlite3.reset(stmt);
+          }
+          break; 
+        }
+
+        await this.sqlite3.exec(this.db, 'COMMIT');
+        
+        let afterSignalCount = 0;
+        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM signals', (row: any[]) => afterSignalCount = row[0]);
+        
+        console.log(`DatabaseService: Signals before: ${beforeSignalCount}, after: ${afterSignalCount} (Added: ${afterSignalCount - beforeSignalCount})`);
+        
+        let finalLocationCount = 0;
+        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
+          finalLocationCount = row[0];
+        });
+        console.log(`DatabaseService: Unique grid cells (locations): ${finalLocationCount}`);
+        
+        await this.sqlite3.exec(this.db, 'VACUUM');
+      } catch (e) {
+        console.error("DatabaseService: Bulk insert error", e);
+        await this.sqlite3.exec(this.db, 'ROLLBACK');
+        throw e;
+      }
+    });
+  }
+}
 
 export const databaseService = new DatabaseService();
