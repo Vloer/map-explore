@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { Street } from '../types';
 
 interface StreetListPanelProps {
@@ -10,20 +10,34 @@ interface StreetListPanelProps {
   onToggle: () => void;
 }
 
+const INITIAL_PAGE_SIZE = 100;
+const PAGE_INCREMENT = 100;
+
 /**
  * Sidebar panel that displays a list of streets in the currently selected region.
  * Provides filtering capabilities and allows clicking a street to center it on the map.
+ * Uses incremental loading to prevent UI freezes with large street lists.
  * 
  * @param props Component properties containing street data, loading state, and visibility toggles.
  */
 export function StreetListPanel({ streets, onStreetClick, isLoading, regionName, isVisible, onToggle }: StreetListPanelProps) {
   const [filter, setFilter] = useState('');
+  const [visibleCount, setVisibleCount] = useState(INITIAL_PAGE_SIZE);
 
-  const filteredStreets = streets.filter(s => 
-    s.name.toLowerCase().includes(filter.toLowerCase())
-  );
+  const filteredStreets = useMemo(() => {
+    const lowerFilter = filter.toLowerCase();
+    return streets.filter(s => s.name.toLowerCase().includes(lowerFilter));
+  }, [streets, filter]);
+
+  // Reset visible count when filter or streets change
+  useMemo(() => {
+    setVisibleCount(INITIAL_PAGE_SIZE);
+  }, [filter, streets]);
 
   if (!isVisible) return null;
+
+  const displayStreets = filteredStreets.slice(0, visibleCount);
+  const hasMore = visibleCount < filteredStreets.length;
 
   return (
     <div style={{
@@ -74,11 +88,11 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
       <div style={{ flexGrow: 1, overflowY: 'auto', padding: '0 10px 10px' }}>
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: '20px', color: '#aaa', fontSize: '0.9rem' }}>Loading streets...</div>
-        ) : streets.length === 0 ? (
+        ) : filteredStreets.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '20px', color: '#aaa', fontSize: '0.9rem' }}>No streets found.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            {filteredStreets.map((street, idx) => (
+            {displayStreets.map((street, idx) => (
               <div 
                 key={`${street.name}-${idx}`}
                 onClick={() => onStreetClick(street)}
@@ -96,13 +110,32 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
                 {street.name}
               </div>
             ))}
+            
+            {hasMore && (
+              <button 
+                onClick={() => setVisibleCount(prev => prev + PAGE_INCREMENT)}
+                style={{
+                  padding: '10px',
+                  marginTop: '5px',
+                  backgroundColor: '#3a3a40',
+                  color: '#2196F3',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  fontWeight: 'bold'
+                }}
+              >
+                Load more ({filteredStreets.length - visibleCount} remaining)
+              </button>
+            )}
           </div>
         )}
       </div>
       
       <div style={{ padding: '8px 12px', borderTop: '1px solid #444', textAlign: 'right', background: '#1a1a1e' }}>
          <span style={{ fontSize: '0.75rem', color: '#888' }}>
-           Total: {streets.length}
+           Showing {displayStreets.length} of {filteredStreets.length}
          </span>
       </div>
     </div>

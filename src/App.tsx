@@ -17,6 +17,7 @@ import { Controls } from './components/Controls';
 import { Tooltip } from './components/Tooltip';
 import { HeatmapLegend } from './components/HeatmapLegend';
 import { StreetListPanel } from './components/StreetListPanel';
+import { LoadingOverlay } from './components/LoadingOverlay';
 
 /**
  * Main application component for the World Fog of War map.
@@ -50,7 +51,7 @@ function App() {
   const [showStreetPanel, setShowStreetPanel] = useState(false);
   const [streetHighlight, setStreetHighlight] = useState<any>(null);
 
-  const { explorationPercentage } = useExplorationStats(regionStats, fogRadius);
+  const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
   const { streets, isLoading: isLoadingStreets, loadStreets, setStreets, geoService } = useStreets();
 
@@ -79,6 +80,7 @@ function App() {
 
   const onImportComplete = () => {
     refreshLayers();
+    refreshStats();
   };
 
   const handleStreetClick = (street: Street) => {
@@ -175,6 +177,13 @@ function App() {
       {tooltip && <Tooltip data={tooltip} />}
       {heatmapEnabled && <HeatmapLegend heatmapStrength={heatmapStrength} />}
 
+      {loading && (
+        <LoadingOverlay 
+          message="Importing Data" 
+          subMessage={importStatus} 
+        />
+      )}
+
       <Controls 
         fogRadius={fogRadius}
         onRadiusChange={handleRadiusChange}
@@ -185,7 +194,6 @@ function App() {
         onUploadClick={onButtonClick}
         onClearDatabase={clearDatabase}
         loading={loading}
-        importStatus={importStatus}
       />
       
       <input type="file" accept=".json,.gpx" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />

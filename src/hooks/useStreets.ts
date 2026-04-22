@@ -3,6 +3,7 @@ import { StreetAPIService } from '../services/StreetAPIService';
 import { StreetGeoService } from '../services/StreetGeoService';
 import { databaseService } from '../services/DatabaseService';
 import { APP_CONFIG } from '../Config';
+import { Logger } from '../Util';
 import type { RegionStats, Street, BoundingBox } from '../types';
 
 /**
@@ -30,20 +31,26 @@ export function useStreets() {
     
     setIsLoading(true);
     setError(null);
+    Logger.start("total_street_load");
     
     try {
+      // 1. Check Database Cache
+      Logger.start("cache_lookup");
       const cached = await databaseService.getStreetsCache(region.osmId, region.osmType);
+      Logger.end("cache_lookup");
       
       if (cached) {
         const age = Date.now() - cached.lastUpdated;
         if (age < APP_CONFIG.STREETS_CACHE_TTL_MS) {
-          console.info(`useStreets: Using cached streets for ${region.name} (${(age / (24*3600*1000)).toFixed(1)} days old)`);
+          Logger.info("useStreets", `Using cached streets for ${region.name} (${(age / (24*3600*1000)).toFixed(1)} days old)`);
           setStreets(cached.streets);
           setIsLoading(false);
+          Logger.end("total_street_load", "Total Street Load (Cache)");
           return;
         }
       }
 
+      // 2. Fetch from API if no cache or expired
       const bounds = region.bounds; 
       const bbox: BoundingBox = {
         south: bounds[0],
@@ -70,13 +77,18 @@ export function useStreets() {
       const allStreets = await apiService.getStreetsInBoundingBox(region.name, bbox, region.type);
       const filtered = await geoService.filterStreetsInPolygon(allStreets, polygon);
       
+      // 3. Save to Database Cache
+      Logger.start("cache_save");
       await databaseService.saveStreetsCache(region.osmId, region.osmType, filtered);
+      Logger.end("cache_save");
+      
       setStreets(filtered);
     } catch (err) {
       console.error("Failed to load streets:", err);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsLoading(false);
+      Logger.end("total_street_load", "Total Street Load (API)");
     }
   }, [apiService, geoService]);
 

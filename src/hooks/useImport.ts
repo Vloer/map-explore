@@ -33,7 +33,7 @@ export function useImport(onImportComplete: () => void) {
         
         if (fileName.endsWith('.json')) {
           const data = JSON.parse(text);
-          setImportStatus('Importing JSON...');
+          setImportStatus('Importing Google history...');
           await importService.importGoogleHistory(data as TimelineData);
         } else if (fileName.endsWith('.gpx')) {
           setImportStatus('Importing GPX...');
@@ -42,7 +42,6 @@ export function useImport(onImportComplete: () => void) {
           throw new Error("Unsupported file format");
         }
         
-        setImportStatus('Import complete!');
         onImportComplete();
       } catch (err) {
         console.error("useImport: File parsing or import failed", err);

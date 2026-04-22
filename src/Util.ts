@@ -2,6 +2,49 @@ import { APP_CONFIG } from "./Config";
 import type { BoundingBox, Coordinates, Node } from "./types";
 
 /**
+ * Utility for standardized performance logging and debugging.
+ */
+export class Logger {
+  private static timers: Map<string, number> = new Map();
+
+  /**
+   * Starts a named performance timer.
+   * @param label Unique label for the timer.
+   */
+  static start(label: string) {
+    this.timers.set(label, performance.now());
+  }
+
+  /**
+   * Stops a timer and logs the elapsed time.
+   * @param label The label used to start the timer.
+   * @param message Optional message prefix.
+   */
+  static end(label: string, message?: string) {
+    const startTime = this.timers.get(label);
+    if (startTime === undefined) return;
+    const duration = performance.now() - startTime;
+    console.log(`[PERF] ${message || label}: ${duration.toFixed(2)}ms`);
+    this.timers.delete(label);
+  }
+
+  /**
+   * Logs a standard debug message.
+   */
+  static debug(module: string, message: string, data?: any) {
+    if (data) console.debug(`[${module}] ${message}`, data);
+    else console.debug(`[${module}] ${message}`);
+  }
+
+  /**
+   * Logs an informational message.
+   */
+  static info(module: string, message: string) {
+    console.info(`[${module}] ${message}`);
+  }
+}
+
+/**
  * Converts meters to approximate E7 coordinate units.
  * Note: 1 degree latitude is ~111,111 meters.
  * E7 units are degrees * 10,000,000.
@@ -96,4 +139,3 @@ export function snap(val: number): number {
   const s = metersToE7(APP_CONFIG.DETAIL_RADIUS_METERS);
   return Math.round(val / s) * s;
 }
-

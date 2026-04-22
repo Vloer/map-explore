@@ -3,6 +3,7 @@ import type {
   StreetSegment,
 } from "../types";
 import * as turf from "@turf/turf";
+import { Logger } from "../Util";
 
 export interface ProgressReport {
   processed: number;
@@ -17,6 +18,7 @@ export interface ProgressReport {
 export class StreetGeoService {
   /**
    * Filters a list of streets to only include those that intersect with or are within a polygon.
+   * Asynchronous and chunked to prevent UI freezing.
    * @param {Street[]} streets Array of streets to filter.
    * @param {number[][]} boundingPolygon Coordinates of the bounding polygon.
    * @param {(progress: ProgressReport) => void} [reportProgress] Optional callback for progress updates.
@@ -32,12 +34,16 @@ export class StreetGeoService {
     const closedPolygonCoords = this._ensurePolygonIsClosed(boundingPolygon);
     if (closedPolygonCoords.length < 4) return streets;
 
+    Logger.start("polygon_filter");
     const polygon = turf.polygon([closedPolygonCoords]);
     const filteredStreets: Street[] = [];
 
+    // Smaller chunk size to ensure more frequent yielding
     const chunkSize = this._setChunkSize(streets.length);
+    
     for (let i = 0; i < streets.length; i += chunkSize) {
       const chunk = streets.slice(i, i + chunkSize);
+      
       for (const street of chunk) {
         const segmentsToProcess = (street.segments && street.segments.length > 0) 
           ? street.segments 
@@ -69,6 +75,7 @@ export class StreetGeoService {
           });
         }
       }
+
       if (reportProgress) {
         reportProgress({
           processed: Math.min(i + chunkSize, streets.length),
@@ -76,8 +83,12 @@ export class StreetGeoService {
           message: `Processing streets... (${Math.min(i + chunkSize, streets.length)}/${streets.length})`,
         });
       }
+      
+      // Always yield after a chunk to keep UI responsive
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
+    
+    Logger.end("polygon_filter", `Filtered ${streets.length} down to ${filteredStreets.length} streets`);
     return filteredStreets;
   }
 
@@ -129,10 +140,10 @@ export class StreetGeoService {
    * @private
    */
   private _setChunkSize(amount: number): number {
-    if (amount < 200) return 10;
+    // Aggressive yielding for large sets
+    if (amount < 200) return 20;
     if (amount < 1000) return 50;
-    if (amount < 5000) return 200;
-    return 500;
+    if (amount < 5000) return 100;
+    return 200;
   }
 }
-

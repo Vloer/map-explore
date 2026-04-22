@@ -4,7 +4,8 @@ import SQLiteESMFactory from 'wa-sqlite/dist/wa-sqlite-async.mjs';
 // @ts-ignore
 import { IDBBatchAtomicVFS } from 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
 import { APP_CONFIG } from '../Config';
-import { metersToE7, snap } from '../Util';
+import { metersToE7, snap, Logger } from '../Util';
+import type { Street } from '../types';
 
 /**
  * Represents a processed signal point to be inserted into the database.
@@ -97,14 +98,13 @@ export class DatabaseService {
     if (!this.db) return;
 
     let needsReset = false;
-    await this.sqlite3.exec(this.db, "SELECT name FROM sqlite_master WHERE type='table' AND name='signals'", (row: any[]) => {
+    await this.sqlite3.exec(this.db, "SELECT name FROM sqlite_master WHERE type='table' AND name='streets_meta'", (row: any[]) => {
       if (!row[0]) needsReset = true;
     });
 
     if (needsReset) {
-      console.log("DatabaseService: Resetting database for new deduplication schema.");
-      await this.sqlite3.exec(this.db, "DROP TABLE IF EXISTS locations;");
-      await this.sqlite3.exec(this.db, "DROP TABLE IF EXISTS signals;");
+      console.log("DatabaseService: Updating schema to split streets cache.");
+      await this.sqlite3.exec(this.db, "DROP TABLE IF EXISTS streets_cache;");
     }
 
     await this.sqlite3.exec(this.db, `
@@ -131,11 +131,18 @@ export class DatabaseService {
           latest_timestamp = MAX(latest_timestamp, excluded.latest_timestamp);
       END;
 
-      CREATE TABLE IF NOT EXISTS streets_cache (
+      /* Split cache into Meta (fast) and Data (heavy) to avoid massive UI freezes */
+      CREATE TABLE IF NOT EXISTS streets_meta (
+        osm_id INTEGER,
+        osm_type TEXT,
+        last_updated INTEGER,
+        PRIMARY KEY (osm_id, osm_type)
+      );
+
+      CREATE TABLE IF NOT EXISTS streets_data (
         osm_id INTEGER,
         osm_type TEXT,
         streets_json TEXT,
-        last_updated INTEGER,
         PRIMARY KEY (osm_id, osm_type)
       );
     `);
@@ -148,63 +155,115 @@ export class DatabaseService {
   async clearDatabase() {
     return this.withLock(async () => {
       if (!this.db) return;
-      await this.sqlite3.exec(this.db, "DELETE FROM signals; DELETE FROM locations; DELETE FROM streets_cache; VACUUM;");
+      await this.sqlite3.exec(this.db, `
+        DELETE FROM signals; 
+        DELETE FROM locations; 
+        DELETE FROM streets_meta; 
+        DELETE FROM streets_data; 
+        VACUUM;
+      `);
       console.log("DatabaseService: Database cleared.");
     });
   }
 
   /**
    * Retrieves cached street data for a specific OSM object.
+   * Performs a two-step lookup using split tables to avoid reading large JSON blobs unless necessary.
    * @param {number} osmId The OSM ID.
-   * @param {string} osmType The OSM type (e.g., 'relation', 'way').
+   * @param {string} osmType The OSM type.
    * @returns {Promise<{ streets: any[], lastUpdated: number } | null>}
    */
   async getStreetsCache(osmId: number, osmType: string): Promise<{ streets: any[], lastUpdated: number } | null> {
     if (!this.db) return null;
     return this.withLock(async () => {
-      let result: { streets: any[], lastUpdated: number } | null = null;
-      const sql = `SELECT streets_json, last_updated FROM streets_cache WHERE osm_id = ? AND osm_type = ?`;
+      let lastUpdated: number | null = null;
+      const osmIdBig = BigInt(osmId);
+
+      // Step 1: Quick metadata check from the tiny Meta table
+      Logger.start("cache_meta_lookup");
+      const metaSql = `SELECT last_updated FROM streets_meta WHERE osm_id = ? AND osm_type = ? LIMIT 1`;
       try {
-        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          this.sqlite3.bind_int64(stmt, 1, BigInt(osmId));
+        for await (const stmt of this.sqlite3.statements(this.db, metaSql)) {
+          this.sqlite3.bind_int64(stmt, 1, osmIdBig);
           this.sqlite3.bind_text(stmt, 2, osmType);
           if (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
-            const json = this.sqlite3.column_text(stmt, 0);
-            const lastUpdated = Number(this.sqlite3.column_int64(stmt, 1));
-            result = {
-              streets: JSON.parse(json),
-              lastUpdated
-            };
+            lastUpdated = Number(this.sqlite3.column_int64(stmt, 0));
           }
         }
       } catch (e) {
-        console.error("DatabaseService: Cache lookup error", e);
+        console.error("DatabaseService: Cache meta lookup error", e);
       }
-      return result;
+      Logger.end("cache_meta_lookup", `Metadata lookup for ${osmType} ${osmId} (${lastUpdated ? 'found' : 'not found'})`);
+
+      if (lastUpdated === null) return null;
+
+      // Step 2: Fetch the actual heavy data only if metadata exists
+      Logger.start("cache_data_fetch");
+      let streets: any[] | null = null;
+      const dataSql = `SELECT streets_json FROM streets_data WHERE osm_id = ? AND osm_type = ? LIMIT 1`;
+      try {
+        for await (const stmt of this.sqlite3.statements(this.db, dataSql)) {
+          this.sqlite3.bind_int64(stmt, 1, osmIdBig);
+          this.sqlite3.bind_text(stmt, 2, osmType);
+          if (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
+            const json = this.sqlite3.column_text(stmt, 0);
+            Logger.start("cache_json_parse");
+            streets = JSON.parse(json);
+            Logger.end("cache_json_parse", `Parsed ${streets?.length || 0} streets`);
+          }
+        }
+      } catch (e) {
+        console.error("DatabaseService: Cache data fetch error", e);
+      }
+      Logger.end("cache_data_fetch", `Data fetch for ${osmType} ${osmId}`);
+
+      return streets ? { streets, lastUpdated } : null;
     });
   }
 
   /**
-   * Saves street data to the cache.
+   * Saves street data to the cache using split tables.
    * @param {number} osmId The OSM ID.
    * @param {string} osmType The OSM type.
    * @param {any[]} streets Array of street objects to cache.
    * @returns {Promise<void>}
    */
-  async saveStreetsCache(osmId: number, osmIdVal: string, streets: any[]) {
+  async saveStreetsCache(osmId: number, osmType: string, streets: Street[]) {
     if (!this.db) return;
     return this.withLock(async () => {
-      const sql = `INSERT OR REPLACE INTO streets_cache (osm_id, osm_type, streets_json, last_updated) VALUES (?, ?, ?, ?)`;
+      const now = Date.now();
+      const osmIdBig = BigInt(osmId);
+
       try {
-        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          this.sqlite3.bind_int64(stmt, 1, BigInt(osmId));
-          this.sqlite3.bind_text(stmt, 2, osmIdVal);
-          this.sqlite3.bind_text(stmt, 3, JSON.stringify(streets));
-          this.sqlite3.bind_int64(stmt, 4, BigInt(Date.now()));
+        await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
+
+        // Update Metadata
+        const metaSql = `INSERT OR REPLACE INTO streets_meta (osm_id, osm_type, last_updated) VALUES (?, ?, ?)`;
+        for await (const stmt of this.sqlite3.statements(this.db, metaSql)) {
+          this.sqlite3.bind_int64(stmt, 1, osmIdBig);
+          this.sqlite3.bind_text(stmt, 2, osmType);
+          this.sqlite3.bind_int64(stmt, 3, BigInt(now));
           await this.sqlite3.step(stmt);
         }
-        console.debug(`Saved streets data: ${osmIdVal} ${osmId}`)
+
+        // Update Heavy Data
+        const dataSql = `INSERT OR REPLACE INTO streets_data (osm_id, osm_type, streets_json) VALUES (?, ?, ?)`;
+        for await (const stmt of this.sqlite3.statements(this.db, dataSql)) {
+          this.sqlite3.bind_int64(stmt, 1, osmIdBig);
+          this.sqlite3.bind_text(stmt, 2, osmType);
+          
+          Logger.start("cache_json_stringify");
+          const json = JSON.stringify(streets);
+          Logger.end("cache_json_stringify", `Stringified ${streets.length} streets`);
+          
+          this.sqlite3.bind_text(stmt, 3, json);
+          await this.sqlite3.step(stmt);
+        }
+
+        await this.sqlite3.exec(this.db, 'COMMIT');
+        console.debug(`DatabaseService: Saved cache for ${osmType} ${osmId}`);
       } catch (e) {
+        await this.sqlite3.exec(this.db, 'ROLLBACK');
         console.error("DatabaseService: Cache save error", e);
       }
     });
@@ -241,7 +300,6 @@ export class DatabaseService {
         `;
       } else {
         // Low detail: Group by buckets to downsample in-database
-        // We use integer division to create buckets and center the points
         sql = `
           SELECT 
             (lat_e7 / ${factor}) * ${factor} + (${factor} / 2) as lat,
