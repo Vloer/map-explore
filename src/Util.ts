@@ -107,21 +107,10 @@ export function calculateCenter(coordinates: Node[] | Coordinates[]): { lat: num
     lat: sumLat / coordinates.length,
     lng: sumLng / coordinates.length
   };
-}
+  }
 
-/**
- * Formats a bounding box for use in API queries (South,West,North,East).
- * 
- * @param {BoundingBox} bbox The bounding box object.
- * @returns {string} Comma-separated bounding box string.
- */
-export function bboxToString(bbox: BoundingBox): string {
-  return `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
-}
-
-/**
- * Capitalizes the first letter of a string.
- * 
+  /**
+  * Capitalizes the first letter of a string. * 
  * @param {string} s The string to capitalize.
  * @returns {string} The capitalized string.
  */

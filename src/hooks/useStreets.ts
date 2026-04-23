@@ -4,11 +4,11 @@ import { StreetGeoService } from '../services/StreetGeoService';
 import { databaseService } from '../services/DatabaseService';
 import { APP_CONFIG } from '../Config';
 import { Logger } from '../Util';
-import type { RegionStats, Street, BoundingBox } from '../types';
+import type { RegionStats, Street } from '../types';
 
 /**
  * Hook for managing and loading street data for a specific geographic region.
- * Handles caching, API fetching from OSM, and spatial filtering.
+ * Handles caching, API fetching from PDOK, and spatial filtering.
  * 
  * @returns Object containing street data, loading state, errors, and load functions.
  */
@@ -22,7 +22,7 @@ export function useStreets() {
 
   /**
    * Loads street data for a given region.
-   * Checks local cache first before fetching from Overpass API.
+   * Checks local cache first before fetching from API.
    * 
    * @param region The region statistics object containing bounds and geometry.
    */
@@ -51,14 +51,6 @@ export function useStreets() {
       }
 
       // 2. Fetch from API if no cache or expired
-      const bounds = region.bounds; 
-      const bbox: BoundingBox = {
-        south: bounds[0],
-        north: bounds[1],
-        west: bounds[2],
-        east: bounds[3]
-      };
-
       let polygon: number[][] = [];
       const geojson = region.geojson;
       
@@ -74,7 +66,7 @@ export function useStreets() {
         polygon = geojson.coordinates[0][0];
       }
 
-      const allStreets = await apiService.getStreetsInBoundingBox(region.name, bbox, region.type);
+      const allStreets = await apiService.getStreetsForPlace(region.name, region.type);
       const filtered = await geoService.filterStreetsInPolygon(allStreets, polygon);
       
       // 3. Save to Database Cache
