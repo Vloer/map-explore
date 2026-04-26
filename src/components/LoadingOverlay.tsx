@@ -1,15 +1,18 @@
 interface LoadingOverlayProps {
   message: string;
   subMessage?: string;
+  isError?: boolean;
+  onReset?: () => void;
 }
 
 /**
  * Full-screen loading overlay with a CSS spinner.
  * Used during data imports and heavy database operations.
+ * Also serves as an error screen with a reset option for database corruption.
  * 
  * @param props Component properties containing the message to display.
  */
-export function LoadingOverlay({ message, subMessage }: LoadingOverlayProps) {
+export function LoadingOverlay({ message, subMessage, isError, onReset }: LoadingOverlayProps) {
   return (
     <div style={{
       position: 'fixed',
@@ -17,14 +20,16 @@ export function LoadingOverlay({ message, subMessage }: LoadingOverlayProps) {
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.85)',
+      backgroundColor: isError ? 'rgba(60, 0, 0, 0.9)' : 'rgba(0, 0, 0, 0.85)',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      zIndex: 2000,
+      zIndex: 3000,
       color: 'white',
-      backdropFilter: 'blur(4px)'
+      padding: '20px',
+      textAlign: 'center',
+      backdropFilter: 'blur(8px)'
     }}>
       <style>
         {`
@@ -37,16 +42,55 @@ export function LoadingOverlay({ message, subMessage }: LoadingOverlayProps) {
             animation: spin 1s linear infinite;
             margin-bottom: 20px;
           }
+          .reset-btn {
+            margin-top: 30px;
+            padding: 12px 24px;
+            background-color: #f44336;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 1rem;
+            transition: background-color 0.2s;
+          }
+          .reset-btn:hover {
+            background-color: #d32f2f;
+          }
           @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
           }
         `}
       </style>
-      <div className="spinner" />
-      <h2 style={{ margin: '0 0 10px 0', fontSize: '1.2rem', fontWeight: '500' }}>{message}</h2>
+      
+      {!isError && <div className="spinner" />}
+      
+      <h2 style={{ 
+        margin: '0 0 10px 0', 
+        fontSize: '1.4rem', 
+        fontWeight: 'bold',
+        color: isError ? '#ff5252' : 'white'
+      }}>
+        {message}
+      </h2>
+      
       {subMessage && (
-        <p style={{ margin: 0, fontSize: '0.9rem', color: '#aaa' }}>{subMessage}</p>
+        <p style={{ 
+          margin: 0, 
+          maxWidth: '600px',
+          fontSize: '1rem', 
+          lineHeight: '1.5',
+          color: isError ? '#ffcdd2' : '#aaa' 
+        }}>
+          {subMessage}
+        </p>
+      )}
+
+      {isError && onReset && (
+        <button className="reset-btn" onClick={onReset}>
+          Emergency Database Reset
+        </button>
       )}
     </div>
   );

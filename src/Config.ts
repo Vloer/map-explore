@@ -8,6 +8,18 @@ export const APP_CONFIG = {
   MAP_MAX_ZOOM: 19,
   MAP_STYLE: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
 
+  // API Keys
+  GEOAPIFY_API_KEY: import.meta.env.VITE_GEOAPIFY_API_KEY || '',
+
+  // Geoapify Tile settings
+  GEOAPIFY_TILE_SET: 'osm-bright',
+  GEOAPIFY_TILE_ZOOM: 14,
+  GEOAPIFY_ROADS_LAYER: 'transportation_name', // Has names and geometries in OpenMapTiles
+  
+  // Unlocking settings
+  UNLOCK_GRID_SIZE_METERS: 15,
+  UNLOCK_DISTANCE_THRESHOLD_METERS: 20,
+
   // Reveal radius settings (meters)
   BASE_FOG_REVEAL_RADIUS: 100,
   MAX_FOG_REVEAL_RADIUS: 150,
@@ -63,7 +75,7 @@ export const APP_CONFIG = {
   METERS_PER_DEGREE: 111111,
   EARTH_RADIUS_METERS: 6378137,
   TILE_SIZE: 256,
-  SQLITE_PAGE_SIZE: 8192,
+  SQLITE_PAGE_SIZE: 4096,
   NEAREST_QUERY_LIMIT: 200,
 };
 

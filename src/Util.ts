@@ -1,5 +1,5 @@
 import { APP_CONFIG } from "./Config";
-import type { BoundingBox, Coordinates, Node } from "./types";
+import type { Coordinates, Node } from "./types";
 
 /**
  * Utility for standardized performance logging and debugging.

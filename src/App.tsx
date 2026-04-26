@@ -50,6 +50,15 @@ function App() {
   const [heatmapStrength, setHeatmapStrength] = useState(APP_CONFIG.HEATMAP_STARTING_SENSITIVITY);
   const [showStreetPanel, setShowStreetPanel] = useState(false);
   const [streetHighlight, setStreetHighlight] = useState<any>(null);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  // Initialize database on mount
+  useEffect(() => {
+    databaseService.init().catch(err => {
+      console.error("Critical Database Initialization Failure", err);
+      setInitError(err.message || String(err));
+    });
+  }, []);
 
   const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
@@ -181,6 +190,15 @@ function App() {
         <LoadingOverlay 
           message="Importing Data" 
           subMessage={importStatus} 
+        />
+      )}
+
+      {initError && (
+        <LoadingOverlay 
+          message="Database Error" 
+          subMessage={`We encountered a problem with the local database: ${initError}. This can happen if the browser storage is corrupted or memory limits are exceeded.`}
+          isError={true}
+          onReset={() => databaseService.resetDatabase()}
         />
       )}
 

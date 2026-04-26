@@ -4,7 +4,7 @@ import { StreetGeoService } from '../services/StreetGeoService';
 import { databaseService } from '../services/DatabaseService';
 import { APP_CONFIG } from '../Config';
 import { Logger } from '../Util';
-import type { RegionStats, Street } from '../types';
+import type { RegionStats, Street, PlaceGeoData, BoundingBox } from '../types';
 
 /**
  * Hook for managing and loading street data for a specific geographic region.
@@ -43,6 +43,9 @@ export function useStreets() {
         const age = Date.now() - cached.lastUpdated;
         if (age < APP_CONFIG.STREETS_CACHE_TTL_MS) {
           Logger.info("useStreets", `Using cached streets for ${region.name} (${(age / (24*3600*1000)).toFixed(1)} days old)`);
+          
+          // Even if cached, we might want to re-check visited status if it wasn't tracked?
+          // For now, let's just use the cache.
           setStreets(cached.streets);
           setIsLoading(false);
           Logger.end("total_street_load", "Total Street Load (Cache)");
@@ -66,8 +69,37 @@ export function useStreets() {
         polygon = geojson.coordinates[0][0];
       }
 
-      const allStreets = await apiService.getStreetsForPlace(region.name, region.type);
+      // Ensure we have correct min/max for the bbox
+      const bbox: BoundingBox = {
+        south: Math.min(region.bounds[0], region.bounds[1]),
+        north: Math.max(region.bounds[0], region.bounds[1]),
+        west: Math.min(region.bounds[2], region.bounds[3]),
+        east: Math.max(region.bounds[2], region.bounds[3])
+      };
+
+      console.debug(`useStreets: Requesting bbox: S:${bbox.south} N:${bbox.north} W:${bbox.west} E:${bbox.east}`);
+
+      const placeData: PlaceGeoData = {
+        name: region.name,
+        display_name: region.name,
+        lat: (bbox.south + bbox.north) / 2,
+        lng: (bbox.west + bbox.east) / 2,
+        place_type: region.type,
+        bounding_box: bbox,
+        bounding_polygon: polygon,
+        streets: []
+      };
+
+      const allStreets = await apiService.getStreetsForPlace(placeData);
+      console.info(`useStreets: API returned ${allStreets.length} total streets for ${region.name}`);
+      
+      // Perform spatial clipping to the polygon
+      Logger.start("polygon_clipping");
       const filtered = await geoService.filterStreetsInPolygon(allStreets, polygon);
+      Logger.end("polygon_clipping", `Clipped ${allStreets.length} down to ${filtered.length} streets`);
+      
+      const visitedCount = filtered.filter(s => s.visited).length;
+      console.info(`useStreets: ${visitedCount}/${filtered.length} streets visited in ${region.name}`);
       
       // 3. Save to Database Cache
       Logger.start("cache_save");

@@ -10,8 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^2.0.4",
     "@turf/turf": "^7.3.4",
     "maplibre-gl": "^5.23.0",
+    "pbf": "^4.0.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "wa-sqlite": "^1.0.0"
@@ -23,6 +25,7 @@
     "@types/babel__core": "^7.20.5",
     "@types/maplibre-gl": "^1.13.2",
     "@types/node": "^24.12.2",
+    "@types/pbf": "^3.0.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",

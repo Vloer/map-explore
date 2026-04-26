@@ -38,6 +38,13 @@ export interface Street {
   segments: StreetSegment[];
   visited: boolean;
   coordinates: Node[];
+  osm_id?: number; // Added to support unique identification from tiles
+}
+
+export interface TileXYZ {
+  x: number;
+  y: number;
+  z: number;
 }
 
 export interface PlaceGeoData {

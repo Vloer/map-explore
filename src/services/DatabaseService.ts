@@ -70,23 +70,49 @@ export class DatabaseService {
     return this.withLock(async () => {
       if (this.db !== null) return;
 
-      const module = await SQLiteESMFactory({
-        locateFile: (file: string) => file.endsWith('.wasm') ? `/${file}` : file
-      });
-      this.sqlite3 = SQLite.Factory(module);
+      try {
+        const module = await SQLiteESMFactory({
+          locateFile: (file: string) => file.endsWith('.wasm') ? `/${file}` : file
+        });
+        this.sqlite3 = SQLite.Factory(module);
 
-      this.vfs = new IDBBatchAtomicVFS('idb-batch');
-      this.sqlite3.vfs_register(this.vfs, true);
+        this.vfs = new IDBBatchAtomicVFS('idb-batch');
+        this.sqlite3.vfs_register(this.vfs, true);
 
-      this.db = await this.sqlite3.open_v2('world_fog_of_war', SQLite.SQLITE_OPEN_READWRITE | SQLite.SQLITE_OPEN_CREATE, 'idb-batch');
+        this.db = await this.sqlite3.open_v2('world_fog_of_war', SQLite.SQLITE_OPEN_READWRITE | SQLite.SQLITE_OPEN_CREATE, 'idb-batch');
 
-      await this.sqlite3.exec(this.db, `
-        PRAGMA page_size = ${APP_CONFIG.SQLITE_PAGE_SIZE};
-        PRAGMA journal_mode = MEMORY;
-        PRAGMA synchronous = NORMAL;
-      `);
+        // Use safer settings to prevent corruption
+        await this.sqlite3.exec(this.db, `
+          PRAGMA page_size = ${APP_CONFIG.SQLITE_PAGE_SIZE};
+          PRAGMA journal_mode = DELETE;
+          PRAGMA synchronous = NORMAL;
+          PRAGMA cache_size = -4000;
+        `);
 
-      await this.createTable();
+        // Check for integrity
+        let isMalformed = false;
+        try {
+          await this.sqlite3.exec(this.db, "PRAGMA integrity_check(1)", (row: any[]) => {
+            if (row[0] !== 'ok') isMalformed = true;
+          });
+        } catch (e) {
+          isMalformed = true;
+        }
+
+        if (isMalformed) {
+          console.error("DatabaseService: Database is malformed! Clearing and recreating...");
+          await this.sqlite3.close(this.db);
+          this.db = null;
+          // Drastic: clear IndexedDB if possible, but here we just try to reopen with CREATE
+          // Actually, if it's malformed, we might need the user to refresh or we'd need to use indexedDB.deleteDatabase
+          throw new Error("Database corruption detected. Please refresh the page.");
+        }
+
+        await this.createTable();
+      } catch (e) {
+        console.error("DatabaseService: Initialization error", e);
+        throw e;
+      }
     });
   }
 
@@ -145,7 +171,127 @@ export class DatabaseService {
         streets_json TEXT,
         PRIMARY KEY (osm_id, osm_type)
       );
+
+      /* New table for fast spatial unlocking */
+      CREATE TABLE IF NOT EXISTS street_grid_index (
+        street_name TEXT,
+        place_name TEXT,
+        grid_id INTEGER,
+        PRIMARY KEY (street_name, place_name, grid_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_grid_id ON street_grid_index(grid_id);
     `);
+  }
+
+  /**
+   * Calculates a unique grid ID for a coordinate based on the configured grid size.
+   * Uses E7 units to ensure exact match with SQL logic.
+   * @param {number} lat Latitude
+   * @param {number} lng Longitude
+   * @returns {number}
+   */
+  public getGridId(lat: number, lng: number): number {
+    const gridSizeDegrees = APP_CONFIG.UNLOCK_GRID_SIZE_METERS / APP_CONFIG.METERS_PER_DEGREE;
+    const gridSizeE7 = Math.round(gridSizeDegrees * 1e7);
+    
+    const latE7 = Math.round(lat * 1e7);
+    const lngE7 = Math.round(lng * 1e7);
+    
+    // Consistent with floorDiv in checkVisitedStreets
+    const latGrid = latE7 < 0 && latE7 % gridSizeE7 !== 0 
+      ? Math.floor(latE7 / gridSizeE7) - 1 
+      : Math.floor(latE7 / gridSizeE7);
+      
+    const lngGrid = lngE7 < 0 && lngE7 % gridSizeE7 !== 0 
+      ? Math.floor(lngE7 / gridSizeE7) - 1 
+      : Math.floor(lngE7 / gridSizeE7);
+    
+    return (latGrid * 10000000) + lngGrid;
+  }
+
+  /**
+   * Updates the street grid index for a set of streets.
+   * @param {Street[]} streets 
+   * @returns {Promise<void>}
+   */
+  async updateStreetGridIndex(streets: Street[]) {
+    if (!this.db) return;
+    return this.withLock(async () => {
+      try {
+        Logger.start("db_grid_index_update");
+        await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
+        const sql = `INSERT OR IGNORE INTO street_grid_index (street_name, place_name, grid_id) VALUES (?, ?, ?)`;
+        
+        let cellsAdded = 0;
+        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
+          for (const street of streets) {
+            const gridIds = new Set<number>();
+            // Use segments if available, otherwise coordinates
+            const targetCoords = (street.segments && street.segments.length > 0)
+              ? street.segments.flatMap(s => s.coordinates)
+              : street.coordinates;
+
+            for (const coord of targetCoords) {
+              gridIds.add(this.getGridId(coord.lat, coord.lng));
+            }
+
+            for (const gridId of gridIds) {
+              this.sqlite3.bind_text(stmt, 1, street.name);
+              this.sqlite3.bind_text(stmt, 2, street.place);
+              this.sqlite3.bind_int64(stmt, 3, BigInt(gridId));
+              await this.sqlite3.step(stmt);
+              this.sqlite3.reset(stmt);
+              cellsAdded++;
+            }
+          }
+          break;
+        }
+        await this.sqlite3.exec(this.db, 'COMMIT');
+        Logger.end("db_grid_index_update", `Grid index updated: ${cellsAdded} cells for ${streets.length} streets`);
+      } catch (e) {
+        await this.sqlite3.exec(this.db, 'ROLLBACK');
+        console.error("DatabaseService: Grid index update error", e);
+      }
+    });
+  }
+
+  /**
+   * Checks which of the provided streets have been visited.
+   * Uses a robust SQL join that accounts for negative coordinate division.
+   * @returns {Promise<Set<string>>} Set of "street_name|place_name" strings that are visited.
+   */
+  async checkVisitedStreets(): Promise<Set<string>> {
+    if (!this.db) return new Set();
+    const visited = new Set<string>();
+    
+    return this.withLock(async () => {
+      Logger.start("db_check_visited_join");
+      const gridSizeDegrees = APP_CONFIG.UNLOCK_GRID_SIZE_METERS / APP_CONFIG.METERS_PER_DEGREE;
+      const gridSizeE7 = Math.round(gridSizeDegrees * 1e7);
+
+      // In SQLite, integer division truncates towards zero (e.g. -5 / 10 = 0).
+      // We need it to match Math.floor (e.g. -5 / 10 = -1).
+      // Logic: if val < 0 and val % size != 0, then (val / size) - 1.
+      const floorDiv = (col: string, size: number) => 
+        `CASE WHEN ${col} < 0 AND ${col} % ${size} != 0 THEN (${col} / ${size}) - 1 ELSE ${col} / ${size} END`;
+
+      const sql = `
+        SELECT DISTINCT street_name, place_name 
+        FROM street_grid_index 
+        JOIN locations ON 
+          street_grid_index.grid_id = ( (${floorDiv('locations.lat_e7', gridSizeE7)}) * 10000000 + (${floorDiv('locations.lng_e7', gridSizeE7)}) )
+      `;
+
+      try {
+        await this.sqlite3.exec(this.db, sql, (row: any[]) => {
+          visited.add(`${row[0]}|${row[1]}`);
+        });
+        Logger.end("db_check_visited_join", `Found ${visited.size} visited streets in database`);
+      } catch (e) {
+        console.error("DatabaseService: Visited check error", e);
+      }
+      return visited;
+    });
   }
 
   /**
@@ -429,13 +575,37 @@ export class DatabaseService {
           finalLocationCount = row[0];
         });
         console.log(`DatabaseService: Unique grid cells (locations): ${finalLocationCount}`);
-        
-        await this.sqlite3.exec(this.db, 'VACUUM');
       } catch (e) {
         console.error("DatabaseService: Bulk insert error", e);
         await this.sqlite3.exec(this.db, 'ROLLBACK');
         throw e;
       }
+    });
+  }
+
+  /**
+   * Drastic measure: deletes the entire IndexedDB and reloads the page.
+   */
+  async resetDatabase() {
+    if (this.db) {
+      await this.sqlite3.close(this.db);
+    }
+    
+    return new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('world_fog_of_war');
+      request.onsuccess = () => {
+        console.log("Database deleted successfully");
+        window.location.reload();
+        resolve();
+      };
+      request.onerror = () => {
+        console.error("Error deleting database");
+        reject(new Error("Failed to delete database"));
+      };
+      request.onblocked = () => {
+        console.warn("Delete database blocked. Please close other tabs.");
+        window.location.reload();
+      };
     });
   }
 }

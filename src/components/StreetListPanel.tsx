@@ -26,7 +26,9 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
 
   const filteredStreets = useMemo(() => {
     const lowerFilter = filter.toLowerCase();
-    return streets.filter(s => s.name.toLowerCase().includes(lowerFilter));
+    return streets
+      .filter(s => s.name.toLowerCase().includes(lowerFilter))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [streets, filter]);
 
   // Reset visible count when filter or streets change
@@ -135,7 +137,7 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
       
       <div style={{ padding: '8px 12px', borderTop: '1px solid #444', textAlign: 'right', background: '#1a1a1e' }}>
          <span style={{ fontSize: '0.75rem', color: '#888' }}>
-           Showing {displayStreets.length} of {filteredStreets.length}
+           {filteredStreets.length} streets found
          </span>
       </div>
     </div>
