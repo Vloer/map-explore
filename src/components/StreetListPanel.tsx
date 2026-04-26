@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import type { Street } from '../types';
 
 interface StreetListPanelProps {
@@ -22,19 +22,30 @@ const PAGE_INCREMENT = 100;
  */
 export function StreetListPanel({ streets, onStreetClick, isLoading, regionName, isVisible, onToggle }: StreetListPanelProps) {
   const [filter, setFilter] = useState('');
+  const [showOnlyUnvisited, setShowOnlyUnvisited] = useState(false);
   const [visibleCount, setVisibleCount] = useState(INITIAL_PAGE_SIZE);
 
   const filteredStreets = useMemo(() => {
     const lowerFilter = filter.toLowerCase();
     return streets
-      .filter(s => s.name.toLowerCase().includes(lowerFilter))
+      .filter(s => {
+        const matchesFilter = s.name.toLowerCase().includes(lowerFilter);
+        const matchesVisited = showOnlyUnvisited ? !s.visited : true;
+        return matchesFilter && matchesVisited;
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [streets, filter]);
+  }, [streets, filter, showOnlyUnvisited]);
 
-  // Reset visible count when filter or streets change
-  useMemo(() => {
+  // Reset visible count when filter or unvisited toggle change by using a key on the container
+  // or manually resetting when we detect a change in dependencies.
+  // To avoid the lint error, we'll reset it when the list actually changes.
+  const prevDeps = useRef({ filter, showOnlyUnvisited, streets });
+  if (prevDeps.current.filter !== filter || 
+      prevDeps.current.showOnlyUnvisited !== showOnlyUnvisited || 
+      prevDeps.current.streets !== streets) {
     setVisibleCount(INITIAL_PAGE_SIZE);
-  }, [filter, streets]);
+    prevDeps.current = { filter, showOnlyUnvisited, streets };
+  }
 
   if (!isVisible) return null;
 
@@ -68,7 +79,7 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
         }}>&times;</button>
       </div>
 
-      <div style={{ padding: '10px' }}>
+      <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <input 
           type="text" 
           placeholder="Search streets..." 
@@ -85,6 +96,15 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
             boxSizing: 'border-box'
           }}
         />
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#ccc', cursor: 'pointer' }}>
+          <input 
+            type="checkbox" 
+            checked={showOnlyUnvisited} 
+            onChange={(e) => setShowOnlyUnvisited(e.target.checked)}
+            style={{ cursor: 'pointer' }}
+          />
+          Only show unvisited streets
+        </label>
       </div>
 
       <div style={{ flexGrow: 1, overflowY: 'auto', padding: '0 10px 10px' }}>
@@ -104,12 +124,21 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
                   backgroundColor: 'transparent',
                   cursor: 'pointer',
                   transition: 'background-color 0.2s',
-                  fontSize: '0.85rem'
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
                 }}
                 onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#4a4a50')}
                 onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
-                {street.name}
+                <span style={{ 
+                  textDecoration: street.visited ? 'none' : 'none',
+                  color: street.visited ? '#4CAF50' : 'white'
+                }}>
+                  {street.name}
+                </span>
+                {street.visited && <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>✓</span>}
               </div>
             ))}
             

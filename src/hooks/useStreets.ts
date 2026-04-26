@@ -122,6 +122,15 @@ export function useStreets() {
     error,
     loadStreets,
     setStreets,
-    geoService 
+    geoService,
+    refreshVisited: async () => {
+      setIsLoading(true);
+      try {
+        const updated = await apiService.refreshVisitedStatus(streets);
+        setStreets(updated);
+      } finally {
+        setIsLoading(false);
+      }
+    }
   };
 }

@@ -44,4 +44,21 @@ export class StreetAPIService {
 
     return streets;
   }
+
+  /**
+   * Re-calculates visited status for an existing array of streets.
+   * @param {Street[]} streets 
+   * @returns {Promise<Street[]>} The updated streets.
+   */
+  async refreshVisitedStatus(streets: Street[]): Promise<Street[]> {
+    Logger.start("check_visited_streets");
+    const visitedSet = await databaseService.checkVisitedStreets();
+    Logger.end("check_visited_streets", `Found ${visitedSet.size} visited streets`);
+
+    for (const street of streets) {
+      street.visited = visitedSet.has(`${street.name}|${street.place}`);
+    }
+
+    return [...streets]; // Return a new array to trigger React state updates
+  }
 }

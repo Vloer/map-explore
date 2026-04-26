@@ -178,7 +178,7 @@ export class GeoapifyService {
         const allCoords: Node[] = [];
 
         for (const ring of geometry) {
-          const coords: Node[] = ring.map((pt, idx) => {
+          const coords: Node[] = ring.map((pt: any, idx: any) => {
             const [lng, lat] = this._tileToLonLat(tile.x, tile.y, tile.z, pt.x, pt.y);
             return { id: idx, lat, lng };
           });

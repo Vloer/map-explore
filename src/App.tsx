@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useMap } from './hooks/useMap';
 import { useLayers } from './hooks/useLayers';
 import { useLocationSearch } from './hooks/useLocationSearch';
@@ -62,8 +62,15 @@ function App() {
 
   const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
-  const { streets, isLoading: isLoadingStreets, loadStreets, setStreets, geoService } = useStreets();
+  const { streets, isLoading: isLoadingStreets, loadStreets, setStreets, geoService, refreshVisited } = useStreets();
 
+  const { visitedStreetsCount, totalStreetsCount } = useMemo(() => {
+    const total = streets.length;
+    const visited = streets.filter(s => s.visited).length;
+    return { visitedStreetsCount: visited, totalStreetsCount: total };
+  }, [streets]);
+
+  // Effect for highlighting
   useEffect(() => {
     const features: any[] = [];
     if (regionStats?.geojson) {
@@ -78,14 +85,22 @@ function App() {
     }
     
     setHighlight(features.length > 0 ? { type: 'FeatureCollection', features } : null);
+  }, [regionStats, streetHighlight, setHighlight]);
 
-    if (regionStats) {
-      loadStreets(regionStats);
-    } else {
-      setStreets([]);
-      setStreetHighlight(null);
+  // Effect for loading streets when region changes
+  const prevRegionId = useRef<string | null>(null);
+  useEffect(() => {
+    const currentId = regionStats ? `${regionStats.osmType}:${regionStats.osmId}` : null;
+    if (currentId !== prevRegionId.current) {
+      prevRegionId.current = currentId;
+      if (regionStats) {
+        loadStreets(regionStats);
+      } else {
+        setStreets([]);
+        setStreetHighlight(null);
+      }
     }
-  }, [regionStats, streetHighlight, setHighlight, loadStreets, setStreets]);
+  }, [regionStats, loadStreets, setStreets]);
 
   const onImportComplete = () => {
     refreshLayers();
@@ -167,7 +182,11 @@ function App() {
           <RegionStatsCard 
             stats={regionStats} 
             percentage={explorationPercentage} 
+            visitedStreetsCount={visitedStreetsCount}
+            totalStreetsCount={totalStreetsCount}
             onShowStreets={() => setShowStreetPanel(!showStreetPanel)}
+            onRefreshStreets={refreshVisited}
+            isRefreshing={isLoadingStreets}
           />
         )}
 
