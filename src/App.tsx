@@ -62,7 +62,7 @@ function App() {
 
   const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
-  const { streets, isLoading: isLoadingStreets, loadStreets, setStreets, geoService, refreshVisited } = useStreets();
+  const { streets, isLoading: isLoadingStreets, geoService, refreshVisited } = useStreets(regionStats);
 
   const { visitedStreetsCount, totalStreetsCount } = useMemo(() => {
     const total = streets.length;
@@ -86,21 +86,6 @@ function App() {
     
     setHighlight(features.length > 0 ? { type: 'FeatureCollection', features } : null);
   }, [regionStats, streetHighlight, setHighlight]);
-
-  // Effect for loading streets when region changes
-  const prevRegionId = useRef<string | null>(null);
-  useEffect(() => {
-    const currentId = regionStats ? `${regionStats.osmType}:${regionStats.osmId}` : null;
-    if (currentId !== prevRegionId.current) {
-      prevRegionId.current = currentId;
-      if (regionStats) {
-        loadStreets(regionStats);
-      } else {
-        setStreets([]);
-        setStreetHighlight(null);
-      }
-    }
-  }, [regionStats, loadStreets, setStreets]);
 
   const onImportComplete = () => {
     refreshLayers();
@@ -166,6 +151,16 @@ function App() {
     }
   };
 
+  // Reset highlight when region changes
+  const prevRegionId = useRef<string | null>(null);
+  useEffect(() => {
+    const currentId = regionStats ? `${regionStats.osmType}:${regionStats.osmId}` : null;
+    if (currentId !== prevRegionId.current) {
+      prevRegionId.current = currentId;
+      setStreetHighlight(null);
+    }
+  }, [regionStats]);
+
   return (
     <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', backgroundColor: '#1a1a1a', position: 'relative' }}>
       <div id="map" ref={mapContainer} style={{ flexGrow: 1, height: '100%', width: '100%' }} />
@@ -192,6 +187,7 @@ function App() {
 
         {regionStats && (
           <StreetListPanel 
+            key={`${regionStats.osmType}:${regionStats.osmId}`}
             streets={streets} 
             regionName={regionStats.name}
             onStreetClick={handleStreetClick}
@@ -230,6 +226,7 @@ function App() {
         toggleHeatmap={onToggleHeatmap}
         onUploadClick={onButtonClick}
         onClearDatabase={clearDatabase}
+        onExportDatabase={() => databaseService.exportDatabase()}
         loading={loading}
       />
       

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { StreetAPIService } from '../services/StreetAPIService';
 import { StreetGeoService } from '../services/StreetGeoService';
 import { databaseService } from '../services/DatabaseService';
@@ -10,9 +10,10 @@ import type { RegionStats, Street, PlaceGeoData, BoundingBox } from '../types';
  * Hook for managing and loading street data for a specific geographic region.
  * Handles caching, API fetching from PDOK, and spatial filtering.
  * 
+ * @param region Optional current region to load data for.
  * @returns Object containing street data, loading state, errors, and load functions.
  */
-export function useStreets() {
+export function useStreets(region?: RegionStats | null) {
   const [streets, setStreets] = useState<Street[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,11 +24,9 @@ export function useStreets() {
   /**
    * Loads street data for a given region.
    * Checks local cache first before fetching from API.
-   * 
-   * @param region The region statistics object containing bounds and geometry.
    */
-  const loadStreets = useCallback(async (region: RegionStats) => {
-    if (!region || !region.osmId || !region.osmType) return;
+  const loadStreets = useCallback(async (regionToLoad: RegionStats) => {
+    if (!regionToLoad || !regionToLoad.osmId || !regionToLoad.osmType) return;
     
     setIsLoading(true);
     setError(null);
@@ -36,16 +35,13 @@ export function useStreets() {
     try {
       // 1. Check Database Cache
       Logger.start("cache_lookup");
-      const cached = await databaseService.getStreetsCache(region.osmId, region.osmType);
+      const cached = await databaseService.getStreetsCache(regionToLoad.osmId, regionToLoad.osmType);
       Logger.end("cache_lookup");
       
       if (cached) {
         const age = Date.now() - cached.lastUpdated;
         if (age < APP_CONFIG.STREETS_CACHE_TTL_MS) {
-          Logger.info("useStreets", `Using cached streets for ${region.name} (${(age / (24*3600*1000)).toFixed(1)} days old)`);
-          
-          // Even if cached, we might want to re-check visited status if it wasn't tracked?
-          // For now, let's just use the cache.
+          Logger.info("useStreets", `Using cached streets for ${regionToLoad.name} (${(age / (24*3600*1000)).toFixed(1)} days old)`);
           setStreets(cached.streets);
           setIsLoading(false);
           Logger.end("total_street_load", "Total Street Load (Cache)");
@@ -55,7 +51,7 @@ export function useStreets() {
 
       // 2. Fetch from API if no cache or expired
       let polygon: number[][] = [];
-      const geojson = region.geojson;
+      const geojson = regionToLoad.geojson;
       
       if (geojson.geometry) {
         if (geojson.geometry.type === 'Polygon') {
@@ -71,39 +67,31 @@ export function useStreets() {
 
       // Ensure we have correct min/max for the bbox
       const bbox: BoundingBox = {
-        south: Math.min(region.bounds[0], region.bounds[1]),
-        north: Math.max(region.bounds[0], region.bounds[1]),
-        west: Math.min(region.bounds[2], region.bounds[3]),
-        east: Math.max(region.bounds[2], region.bounds[3])
+        south: Math.min(regionToLoad.bounds[0], regionToLoad.bounds[1]),
+        north: Math.max(regionToLoad.bounds[0], regionToLoad.bounds[1]),
+        west: Math.min(regionToLoad.bounds[2], regionToLoad.bounds[3]),
+        east: Math.max(regionToLoad.bounds[2], regionToLoad.bounds[3])
       };
 
-      console.debug(`useStreets: Requesting bbox: S:${bbox.south} N:${bbox.north} W:${bbox.west} E:${bbox.east}`);
-
       const placeData: PlaceGeoData = {
-        name: region.name,
-        display_name: region.name,
+        name: regionToLoad.name,
+        display_name: regionToLoad.name,
         lat: (bbox.south + bbox.north) / 2,
         lng: (bbox.west + bbox.east) / 2,
-        place_type: region.type,
+        place_type: regionToLoad.type,
         bounding_box: bbox,
         bounding_polygon: polygon,
         streets: []
       };
 
       const allStreets = await apiService.getStreetsForPlace(placeData);
-      console.info(`useStreets: API returned ${allStreets.length} total streets for ${region.name}`);
       
-      // Perform spatial clipping to the polygon
       Logger.start("polygon_clipping");
       const filtered = await geoService.filterStreetsInPolygon(allStreets, polygon);
       Logger.end("polygon_clipping", `Clipped ${allStreets.length} down to ${filtered.length} streets`);
       
-      const visitedCount = filtered.filter(s => s.visited).length;
-      console.info(`useStreets: ${visitedCount}/${filtered.length} streets visited in ${region.name}`);
-      
-      // 3. Save to Database Cache
       Logger.start("cache_save");
-      await databaseService.saveStreetsCache(region.osmId, region.osmType, filtered);
+      await databaseService.saveStreetsCache(regionToLoad.osmId, regionToLoad.osmType, filtered);
       Logger.end("cache_save");
       
       setStreets(filtered);
@@ -115,6 +103,15 @@ export function useStreets() {
       Logger.end("total_street_load", "Total Street Load (API)");
     }
   }, [apiService, geoService]);
+
+  // Effect to automatically load or clear streets when region changes
+  useEffect(() => {
+    if (region) {
+      loadStreets(region);
+    } else {
+      setStreets([]);
+    }
+  }, [region, loadStreets]);
 
   return {
     streets,

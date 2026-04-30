@@ -19,16 +19,35 @@ export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>,
     if (!isMapReady || !map.current) return;
 
     let lastMove = 0;
+    let lastQueryPos = { x: -100, y: -100 };
+
     /**
      * Throttled mouse move handler to check for nearby visited points.
-     * @param {maplibregl.MapMouseEvent} e The mouse event.
      */
     const onMouseMove = async (e: maplibregl.MapMouseEvent) => {
-      if (!map.current || Date.now() - lastMove < 50) return;
-      lastMove = Date.now();
+      if (!map.current) return;
+      
+      const zoom = map.current.getZoom();
+      // Optimization: Don't query database if zoomed out too far (individual points not visible)
+      if (zoom < 13) {
+        if (tooltip) setTooltip(null);
+        return;
+      }
+
+      const now = Date.now();
+      const dx = Math.abs(e.point.x - lastQueryPos.x);
+      const dy = Math.abs(e.point.y - lastQueryPos.y);
+
+      // Optimization: Increase throttle to 150ms AND require mouse to move at least 3px 
+      // from last query position to prevent redundant hits.
+      if (now - lastMove < 150 || (dx < 3 && dy < 3)) return;
+      
+      lastMove = now;
+      lastQueryPos = { x: e.point.x, y: e.point.y };
 
       const radius = APP_CONFIG.HOVER_RADIUS_DEGREES;
       const nearest = await databaseService.getNearestPoint(e.lngLat.lat, e.lngLat.lng, radius);
+      
       if (nearest) {
         const date = new Date(nearest.timestamp);
         const timeStr = date.toLocaleString([], {

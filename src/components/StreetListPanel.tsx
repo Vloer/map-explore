@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import type { Street } from '../types';
 
 interface StreetListPanelProps {
@@ -35,17 +35,6 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
       })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [streets, filter, showOnlyUnvisited]);
-
-  // Reset visible count when filter or unvisited toggle change by using a key on the container
-  // or manually resetting when we detect a change in dependencies.
-  // To avoid the lint error, we'll reset it when the list actually changes.
-  const prevDeps = useRef({ filter, showOnlyUnvisited, streets });
-  if (prevDeps.current.filter !== filter || 
-      prevDeps.current.showOnlyUnvisited !== showOnlyUnvisited || 
-      prevDeps.current.streets !== streets) {
-    setVisibleCount(INITIAL_PAGE_SIZE);
-    prevDeps.current = { filter, showOnlyUnvisited, streets };
-  }
 
   if (!isVisible) return null;
 

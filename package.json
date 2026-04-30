@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "@mapbox/vector-tile": "^2.0.4",
+    "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "@turf/turf": "^7.3.4",
     "maplibre-gl": "^5.23.0",
     "pbf": "^4.0.1",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "wa-sqlite": "^1.0.0"
+    "react-dom": "^19.2.4"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",

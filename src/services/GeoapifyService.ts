@@ -163,7 +163,6 @@ export class GeoapifyService {
         
         // DEBUG: If it's still unnamed, the property is valid but its not a street so we can continue.
         if (!streetName && Object.keys(props).length > 0) {
-          console.debug(placeName, ": GeoapifyService: Unnamed feature properties found. Continuing:", props);
           continue;
         }
 

@@ -1,11 +1,6 @@
-import * as SQLite from 'wa-sqlite';
-// @ts-ignore
-import SQLiteESMFactory from 'wa-sqlite/dist/wa-sqlite-async.mjs';
-// @ts-ignore
-import { IDBBatchAtomicVFS } from 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js';
 import { APP_CONFIG } from '../Config';
-import { metersToE7, snap, Logger } from '../Util';
-import type { Street } from '../types';
+import { metersToE7, Logger } from '../Util';
+import type { Street, BoundingBox } from '../types';
 
 /**
  * Represents a processed signal point to be inserted into the database.
@@ -16,597 +11,334 @@ export interface SignalPoint {
   timestamp: number;
 }
 
+interface WorkerMessage {
+  id: number;
+  type: string;
+  result?: any;
+  error?: string;
+}
+
 /**
  * Service for managing the local SQLite (Wasm) database.
- * Handles location history storage, deduplication, and spatial queries.
+ * Now acts as a proxy to a Web Worker for stability and OPFS support.
  */
 export class DatabaseService {
-  private sqlite3: any;
-  private db: number | null = null;
-  private vfs: any;
-  private lock: Promise<void> = Promise.resolve();
+  private worker: Worker | null = null;
+  private nextId = 1;
+  private pendingRequests = new Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>();
 
   /**
-   * The snapping factor for coordinates in E7 units.
-   * Based on the detail radius configured in APP_CONFIG.
-   * @private
-   */
-  private get snapE7() {
-    return metersToE7(APP_CONFIG.DETAIL_RADIUS_METERS);
-  }
-
-  /**
-   * Helper to ensure database operations are serialized.
-   * @param {() => Promise<T>} fn The function to execute.
-   * @returns {Promise<T>}
-   */
-  async withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const nextLock = this.lock.then(fn);
-    this.lock = nextLock.then(() => {}, () => {});
-    return nextLock;
-  }
-
-  /**
-   * Returns the underlying sqlite3 instance.
-   * @returns {any}
-   */
-  getSqlite3() {
-    return this.sqlite3;
-  }
-
-  /**
-   * Returns the database handle.
-   * @returns {number | null}
-   */
-  getDb() {
-    return this.db;
-  }
-
-  /**
-   * Initializes the SQLite database and creates tables if they don't exist.
-   * @returns {Promise<void>}
+   * Initializes the worker and database.
    */
   async init() {
-    return this.withLock(async () => {
-      if (this.db !== null) return;
+    if (this.worker) return;
 
+    return new Promise<void>((resolve, reject) => {
       try {
-        const module = await SQLiteESMFactory({
-          locateFile: (file: string) => file.endsWith('.wasm') ? `/${file}` : file
-        });
-        this.sqlite3 = SQLite.Factory(module);
+        // Initialize the worker using Vite's constructor pattern
+        this.worker = new Worker(
+          new URL('../workers/sqlite.worker.ts', import.meta.url),
+          { type: 'module' }
+        );
 
-        this.vfs = new IDBBatchAtomicVFS('idb-batch');
-        this.sqlite3.vfs_register(this.vfs, true);
+        this.worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
+          const { id, type, result, error } = event.data;
+          const pending = this.pendingRequests.get(id);
+          
+          if (pending) {
+            this.pendingRequests.delete(id);
+            if (type === 'SUCCESS') {
+              pending.resolve(result);
+            } else {
+              pending.reject(new Error(error));
+            }
+          }
+        };
 
-        this.db = await this.sqlite3.open_v2('world_fog_of_war', SQLite.SQLITE_OPEN_READWRITE | SQLite.SQLITE_OPEN_CREATE, 'idb-batch');
+        this.worker.onerror = (err) => {
+          console.error('DatabaseService: Worker error', err);
+          reject(err);
+        };
 
-        // Use safer settings to prevent corruption
-        await this.sqlite3.exec(this.db, `
-          PRAGMA page_size = ${APP_CONFIG.SQLITE_PAGE_SIZE};
-          PRAGMA journal_mode = DELETE;
-          PRAGMA synchronous = NORMAL;
-          PRAGMA cache_size = -4000;
-        `);
+        // Trigger initialization
+        this.send('init').then(() => {
+          console.log('DatabaseService: Worker initialized.');
+          resolve();
+        }).catch(reject);
 
-        // Check for integrity
-        let isMalformed = false;
-        try {
-          await this.sqlite3.exec(this.db, "PRAGMA integrity_check(1)", (row: any[]) => {
-            if (row[0] !== 'ok') isMalformed = true;
-          });
-        } catch (e) {
-          isMalformed = true;
-        }
-
-        if (isMalformed) {
-          console.error("DatabaseService: Database is malformed! Clearing and recreating...");
-          await this.sqlite3.close(this.db);
-          this.db = null;
-          // Drastic: clear IndexedDB if possible, but here we just try to reopen with CREATE
-          // Actually, if it's malformed, we might need the user to refresh or we'd need to use indexedDB.deleteDatabase
-          throw new Error("Database corruption detected. Please refresh the page.");
-        }
-
-        await this.createTable();
-      } catch (e) {
-        console.error("DatabaseService: Initialization error", e);
-        throw e;
+      } catch (err) {
+        console.error('DatabaseService: Failed to start worker', err);
+        reject(err);
       }
     });
   }
 
   /**
-   * Creates the necessary database tables and triggers.
-   * @private
+   * Sends a message to the worker and returns a promise for the result.
    */
-  private async createTable() {
-    if (!this.db) return;
-
-    let needsReset = false;
-    await this.sqlite3.exec(this.db, "SELECT name FROM sqlite_master WHERE type='table' AND name='streets_meta'", (row: any[]) => {
-      if (!row[0]) needsReset = true;
-    });
-
-    if (needsReset) {
-      console.log("DatabaseService: Updating schema to split streets cache.");
-      await this.sqlite3.exec(this.db, "DROP TABLE IF EXISTS streets_cache;");
+  private send(type: string, data?: unknown): Promise<any> {
+    if (!this.worker) {
+      throw new Error('DatabaseService: Worker not initialized. Call init() first.');
     }
 
-    await this.sqlite3.exec(this.db, `
-      CREATE TABLE IF NOT EXISTS signals (
-        lat_e7 INTEGER,
-        lng_e7 INTEGER,
-        timestamp INTEGER,
-        PRIMARY KEY (lat_e7, lng_e7, timestamp)
-      );
-
-      CREATE TABLE IF NOT EXISTS locations (
-        lat_e7 INTEGER,
-        lng_e7 INTEGER,
-        visit_count INTEGER DEFAULT 0,
-        latest_timestamp INTEGER,
-        PRIMARY KEY (lat_e7, lng_e7)
-      );
-
-      CREATE TRIGGER IF NOT EXISTS ai_signals AFTER INSERT ON signals BEGIN
-        INSERT INTO locations (lat_e7, lng_e7, visit_count, latest_timestamp)
-        VALUES (new.lat_e7, new.lng_e7, 1, new.timestamp)
-        ON CONFLICT(lat_e7, lng_e7) DO UPDATE SET
-          visit_count = visit_count + 1,
-          latest_timestamp = MAX(latest_timestamp, excluded.latest_timestamp);
-      END;
-
-      /* Split cache into Meta (fast) and Data (heavy) to avoid massive UI freezes */
-      CREATE TABLE IF NOT EXISTS streets_meta (
-        osm_id INTEGER,
-        osm_type TEXT,
-        last_updated INTEGER,
-        PRIMARY KEY (osm_id, osm_type)
-      );
-
-      CREATE TABLE IF NOT EXISTS streets_data (
-        osm_id INTEGER,
-        osm_type TEXT,
-        streets_json TEXT,
-        PRIMARY KEY (osm_id, osm_type)
-      );
-
-      /* New table for fast spatial unlocking */
-      CREATE TABLE IF NOT EXISTS street_grid_index (
-        street_name TEXT,
-        place_name TEXT,
-        grid_id INTEGER,
-        PRIMARY KEY (street_name, place_name, grid_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_grid_id ON street_grid_index(grid_id);
-    `);
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pendingRequests.set(id, { resolve, reject });
+      this.worker!.postMessage({ id, type, data });
+    });
   }
 
   /**
-   * Calculates a unique grid ID for a coordinate based on the configured grid size.
-   * Uses E7 units to ensure exact match with SQL logic.
-   * @param {number} lat Latitude
-   * @param {number} lng Longitude
-   * @returns {number}
+   * Implementation of checkVisitedStreets using the worker.
    */
-  public getGridId(lat: number, lng: number): number {
-    const gridSizeDegrees = APP_CONFIG.UNLOCK_GRID_SIZE_METERS / APP_CONFIG.METERS_PER_DEGREE;
-    const gridSizeE7 = Math.round(gridSizeDegrees * 1e7);
-    
-    const latE7 = Math.round(lat * 1e7);
-    const lngE7 = Math.round(lng * 1e7);
-    
-    // Consistent with floorDiv in checkVisitedStreets
-    const latGrid = latE7 < 0 && latE7 % gridSizeE7 !== 0 
-      ? Math.floor(latE7 / gridSizeE7) - 1 
-      : Math.floor(latE7 / gridSizeE7);
-      
-    const lngGrid = lngE7 < 0 && lngE7 % gridSizeE7 !== 0 
-      ? Math.floor(lngE7 / gridSizeE7) - 1 
-      : Math.floor(lngE7 / gridSizeE7);
-    
-    return (latGrid * 10000000) + lngGrid;
+  async checkVisitedStreets(): Promise<Set<string>> {
+    const rows = await this.send('query', {
+      sql: `
+        SELECT DISTINCT s.street_name, s.place_name 
+        FROM street_grid_index s
+        JOIN locations l ON s.grid_id = l.grid_id
+      `
+    }) as { street_name: string, place_name: string }[];
+
+    const visited = new Set<string>();
+    for (const row of rows) {
+      visited.add(`${row.street_name}|${row.place_name}`);
+    }
+    return visited;
   }
 
   /**
    * Updates the street grid index for a set of streets.
-   * @param {Street[]} streets 
-   * @returns {Promise<void>}
    */
   async updateStreetGridIndex(streets: Street[]) {
-    if (!this.db) return;
-    return this.withLock(async () => {
-      try {
-        Logger.start("db_grid_index_update");
-        await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
-        const sql = `INSERT OR IGNORE INTO street_grid_index (street_name, place_name, grid_id) VALUES (?, ?, ?)`;
-        
-        let cellsAdded = 0;
-        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          for (const street of streets) {
-            const gridIds = new Set<number>();
-            // Use segments if available, otherwise coordinates
-            const targetCoords = (street.segments && street.segments.length > 0)
-              ? street.segments.flatMap(s => s.coordinates)
-              : street.coordinates;
-
-            for (const coord of targetCoords) {
-              gridIds.add(this.getGridId(coord.lat, coord.lng));
-            }
-
-            for (const gridId of gridIds) {
-              this.sqlite3.bind_text(stmt, 1, street.name);
-              this.sqlite3.bind_text(stmt, 2, street.place);
-              this.sqlite3.bind_int64(stmt, 3, BigInt(gridId));
-              await this.sqlite3.step(stmt);
-              this.sqlite3.reset(stmt);
-              cellsAdded++;
-            }
-          }
-          break;
-        }
-        await this.sqlite3.exec(this.db, 'COMMIT');
-        Logger.end("db_grid_index_update", `Grid index updated: ${cellsAdded} cells for ${streets.length} streets`);
-      } catch (e) {
-        await this.sqlite3.exec(this.db, 'ROLLBACK');
-        console.error("DatabaseService: Grid index update error", e);
-      }
-    });
-  }
-
-  /**
-   * Checks which of the provided streets have been visited.
-   * Uses a robust SQL join that accounts for negative coordinate division.
-   * @returns {Promise<Set<string>>} Set of "street_name|place_name" strings that are visited.
-   */
-  async checkVisitedStreets(): Promise<Set<string>> {
-    if (!this.db) return new Set();
-    const visited = new Set<string>();
+    Logger.start("db_grid_index_update");
     
-    return this.withLock(async () => {
-      Logger.start("db_check_visited_join");
-      const gridSizeDegrees = APP_CONFIG.UNLOCK_GRID_SIZE_METERS / APP_CONFIG.METERS_PER_DEGREE;
-      const gridSizeE7 = Math.round(gridSizeDegrees * 1e7);
+    let totalGridCells = 0;
+    // We'll process in chunks to balance message overhead vs message size
+    const CHUNK_SIZE = 100;
+    for (let i = 0; i < streets.length; i += CHUNK_SIZE) {
+      const chunk = streets.slice(i, i + CHUNK_SIZE);
+      const streetGridData = chunk.map(street => {
+        const gridIds = new Set<number>();
+        const targetCoords = (street.segments && street.segments.length > 0)
+          ? street.segments.flatMap(s => s.coordinates)
+          : street.coordinates;
 
-      // In SQLite, integer division truncates towards zero (e.g. -5 / 10 = 0).
-      // We need it to match Math.floor (e.g. -5 / 10 = -1).
-      // Logic: if val < 0 and val % size != 0, then (val / size) - 1.
-      const floorDiv = (col: string, size: number) => 
-        `CASE WHEN ${col} < 0 AND ${col} % ${size} != 0 THEN (${col} / ${size}) - 1 ELSE ${col} / ${size} END`;
-
-      const sql = `
-        SELECT DISTINCT street_name, place_name 
-        FROM street_grid_index 
-        JOIN locations ON 
-          street_grid_index.grid_id = ( (${floorDiv('locations.lat_e7', gridSizeE7)}) * 10000000 + (${floorDiv('locations.lng_e7', gridSizeE7)}) )
-      `;
-
-      try {
-        await this.sqlite3.exec(this.db, sql, (row: any[]) => {
-          visited.add(`${row[0]}|${row[1]}`);
-        });
-        Logger.end("db_check_visited_join", `Found ${visited.size} visited streets in database`);
-      } catch (e) {
-        console.error("DatabaseService: Visited check error", e);
-      }
-      return visited;
-    });
-  }
-
-  /**
-   * Clears all data from the database.
-   * @returns {Promise<void>}
-   */
-  async clearDatabase() {
-    return this.withLock(async () => {
-      if (!this.db) return;
-      await this.sqlite3.exec(this.db, `
-        DELETE FROM signals; 
-        DELETE FROM locations; 
-        DELETE FROM streets_meta; 
-        DELETE FROM streets_data; 
-        VACUUM;
-      `);
-      console.log("DatabaseService: Database cleared.");
-    });
-  }
-
-  /**
-   * Retrieves cached street data for a specific OSM object.
-   * Performs a two-step lookup using split tables to avoid reading large JSON blobs unless necessary.
-   * @param {number} osmId The OSM ID.
-   * @param {string} osmType The OSM type.
-   * @returns {Promise<{ streets: any[], lastUpdated: number } | null>}
-   */
-  async getStreetsCache(osmId: number, osmType: string): Promise<{ streets: any[], lastUpdated: number } | null> {
-    if (!this.db) return null;
-    return this.withLock(async () => {
-      let lastUpdated: number | null = null;
-      const osmIdBig = BigInt(osmId);
-
-      // Step 1: Quick metadata check from the tiny Meta table
-      Logger.start("cache_meta_lookup");
-      const metaSql = `SELECT last_updated FROM streets_meta WHERE osm_id = ? AND osm_type = ? LIMIT 1`;
-      try {
-        for await (const stmt of this.sqlite3.statements(this.db, metaSql)) {
-          this.sqlite3.bind_int64(stmt, 1, osmIdBig);
-          this.sqlite3.bind_text(stmt, 2, osmType);
-          if (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
-            lastUpdated = Number(this.sqlite3.column_int64(stmt, 0));
-          }
+        for (const coord of targetCoords) {
+          gridIds.add(this.getGridId(coord.lat, coord.lng));
         }
-      } catch (e) {
-        console.error("DatabaseService: Cache meta lookup error", e);
-      }
-      Logger.end("cache_meta_lookup", `Metadata lookup for ${osmType} ${osmId} (${lastUpdated ? 'found' : 'not found'})`);
 
-      if (lastUpdated === null) return null;
+        totalGridCells += gridIds.size;
+        return {
+          name: street.name,
+          place: street.place,
+          gridIds: Array.from(gridIds)
+        };
+      });
 
-      // Step 2: Fetch the actual heavy data only if metadata exists
-      Logger.start("cache_data_fetch");
-      let streets: any[] | null = null;
-      const dataSql = `SELECT streets_json FROM streets_data WHERE osm_id = ? AND osm_type = ? LIMIT 1`;
-      try {
-        for await (const stmt of this.sqlite3.statements(this.db, dataSql)) {
-          this.sqlite3.bind_int64(stmt, 1, osmIdBig);
-          this.sqlite3.bind_text(stmt, 2, osmType);
-          if (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
-            const json = this.sqlite3.column_text(stmt, 0);
-            Logger.start("cache_json_parse");
-            streets = JSON.parse(json);
-            Logger.end("cache_json_parse", `Parsed ${streets?.length || 0} streets`);
-          }
-        }
-      } catch (e) {
-        console.error("DatabaseService: Cache data fetch error", e);
-      }
-      Logger.end("cache_data_fetch", `Data fetch for ${osmType} ${osmId}`);
+      // Send the chunk to the worker
+      await this.send('batchInsertStreetGrid', { items: streetGridData });
+    }
 
-      return streets ? { streets, lastUpdated } : null;
-    });
+    Logger.end("db_grid_index_update", `Indexed ${streets.length} streets into ${totalGridCells} unique grid cells`);
   }
 
   /**
-   * Saves street data to the cache using split tables.
-   * @param {number} osmId The OSM ID.
-   * @param {string} osmType The OSM type.
-   * @param {any[]} streets Array of street objects to cache.
-   * @returns {Promise<void>}
+   * Performs a bulk insert of signal points.
+   */
+  async bulkInsertSignals(points: SignalPoint[]) {
+    if (points.length === 0) return;
+    
+    await this.send('bulkInsertSignals', { points });
+  }
+
+  /**
+   * Retrieves cached street data.
+   */
+  async getStreetsCache(osmId: number, osmType: string): Promise<{ streets: Street[], lastUpdated: number } | null> {
+    const rows = await this.send('query', {
+      sql: `SELECT last_updated FROM streets_meta WHERE osm_id = ? AND osm_type = ? LIMIT 1`,
+      bind: [osmId, osmType]
+    }) as { last_updated: number }[];
+
+    if (rows.length === 0) return null;
+    const lastUpdated = rows[0].last_updated;
+
+    const dataRows = await this.send('query', {
+      sql: `SELECT streets_json FROM streets_data WHERE osm_id = ? AND osm_type = ? LIMIT 1`,
+      bind: [osmId, osmType]
+    }) as { streets_json: string }[];
+
+    if (dataRows.length === 0) return null;
+    return {
+      streets: JSON.parse(dataRows[0].streets_json),
+      lastUpdated
+    };
+  }
+
+  /**
+   * Saves street data to the cache.
    */
   async saveStreetsCache(osmId: number, osmType: string, streets: Street[]) {
-    if (!this.db) return;
-    return this.withLock(async () => {
-      const now = Date.now();
-      const osmIdBig = BigInt(osmId);
-
-      try {
-        await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
-
-        // Update Metadata
-        const metaSql = `INSERT OR REPLACE INTO streets_meta (osm_id, osm_type, last_updated) VALUES (?, ?, ?)`;
-        for await (const stmt of this.sqlite3.statements(this.db, metaSql)) {
-          this.sqlite3.bind_int64(stmt, 1, osmIdBig);
-          this.sqlite3.bind_text(stmt, 2, osmType);
-          this.sqlite3.bind_int64(stmt, 3, BigInt(now));
-          await this.sqlite3.step(stmt);
-        }
-
-        // Update Heavy Data
-        const dataSql = `INSERT OR REPLACE INTO streets_data (osm_id, osm_type, streets_json) VALUES (?, ?, ?)`;
-        for await (const stmt of this.sqlite3.statements(this.db, dataSql)) {
-          this.sqlite3.bind_int64(stmt, 1, osmIdBig);
-          this.sqlite3.bind_text(stmt, 2, osmType);
-          
-          Logger.start("cache_json_stringify");
-          const json = JSON.stringify(streets);
-          Logger.end("cache_json_stringify", `Stringified ${streets.length} streets`);
-          
-          this.sqlite3.bind_text(stmt, 3, json);
-          await this.sqlite3.step(stmt);
-        }
-
-        await this.sqlite3.exec(this.db, 'COMMIT');
-        console.debug(`DatabaseService: Saved cache for ${osmType} ${osmId}`);
-      } catch (e) {
-        await this.sqlite3.exec(this.db, 'ROLLBACK');
-        console.error("DatabaseService: Cache save error", e);
-      }
+    const now = Date.now();
+    await this.send('exec', {
+      sql: `INSERT OR REPLACE INTO streets_meta (osm_id, osm_type, last_updated) VALUES (?, ?, ?)`,
+      bind: [osmId, osmType, now]
+    });
+    
+    await this.send('exec', {
+      sql: `INSERT OR REPLACE INTO streets_data (osm_id, osm_type, streets_json) VALUES (?, ?, ?)`,
+      bind: [osmId, osmType, JSON.stringify(streets)]
     });
   }
 
   /**
-   * Retrieves all location points within a bounding box.
-   * Performs spatial downsampling if detail level is low.
-   * @param {number} minLat Minimum latitude.
-   * @param {number} maxLat Maximum latitude.
-   * @param {number} minLng Minimum longitude.
-   * @param {number} maxLng Maximum longitude.
-   * @param {number} minDetailMeters Minimum detail in meters (for downsampling).
-   * @returns {Promise<{lat: number, lng: number, visits: number}[]>}
+   * Retrieves points in bounds.
    */
   async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number, minDetailMeters: number = 0): Promise<{lat: number, lng: number, visits: number}[]> {
-    if (!this.db) return [];
+    const minLatE7 = Math.round(minLat * 1e7);
+    const maxLatE7 = Math.round(maxLat * 1e7);
+    const minLngE7 = Math.round(minLng * 1e7);
+    const maxLngE7 = Math.round(maxLng * 1e7);
 
-    return this.withLock(async () => {
-      const points: {lat: number, lng: number, visits: number}[] = [];
-      const minLatE7 = Math.round(minLat * 1e7);
-      const maxLatE7 = Math.round(maxLat * 1e7);
-      const minLngE7 = Math.round(minLng * 1e7);
-      const maxLngE7 = Math.round(maxLng * 1e7);
+    const factor = Math.max(1, metersToE7(minDetailMeters));
+    
+    let sql: string;
+    if (factor <= metersToE7(APP_CONFIG.DETAIL_RADIUS_METERS)) {
+      sql = `SELECT lat_e7, lng_e7, visit_count FROM locations WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?`;
+    } else {
+      sql = `
+        SELECT 
+          (lat_e7 / ${factor}) * ${factor} + (${factor} / 2) as lat_e7,
+          (lng_e7 / ${factor}) * ${factor} + (${factor} / 2) as lng_e7,
+          SUM(visit_count) as visit_count
+        FROM locations 
+        WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
+        GROUP BY lat_e7 / ${factor}, lng_e7 / ${factor}
+      `;
+    }
 
-      const factor = Math.max(1, metersToE7(minDetailMeters));
-      
-      let sql: string;
-      if (factor <= this.snapE7) {
-        // High detail: standard query
-        sql = `
-          SELECT lat_e7, lng_e7, visit_count FROM locations 
-          WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
-        `;
-      } else {
-        // Low detail: Group by buckets to downsample in-database
-        sql = `
-          SELECT 
-            (lat_e7 / ${factor}) * ${factor} + (${factor} / 2) as lat,
-            (lng_e7 / ${factor}) * ${factor} + (${factor} / 2) as lng,
-            MAX(visit_count) as visits
-          FROM locations 
-          WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
-          GROUP BY lat_e7 / ${factor}, lng_e7 / ${factor}
-        `;
-      }
-      
-      try {
-        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          this.sqlite3.bind_int(stmt, 1, minLatE7);
-          this.sqlite3.bind_int(stmt, 2, maxLatE7);
-          this.sqlite3.bind_int(stmt, 3, minLngE7);
-          this.sqlite3.bind_int(stmt, 4, maxLngE7);
+    const rows = await this.send('query', {
+      sql,
+      bind: [minLatE7, maxLatE7, minLngE7, maxLngE7]
+    }) as { lat_e7: number, lng_e7: number, visit_count: number }[];
 
-          while (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
-            points.push({
-              lat: this.sqlite3.column_int(stmt, 0) / 1e7,
-              lng: this.sqlite3.column_int(stmt, 1) / 1e7,
-              visits: this.sqlite3.column_int(stmt, 2)
-            });
-          }
-        }
-      } catch (e) {
-        console.error("DatabaseService: Query error", e);
-      }
-      return points;
-    });
+    return rows.map((r) => ({
+      lat: r.lat_e7 / 1e7,
+      lng: r.lng_e7 / 1e7,
+      visits: r.visit_count
+    }));
   }
 
   /**
-   * Finds the nearest location point to the given coordinates within a radius.
-   * @param {number} lat The latitude.
-   * @param {number} lng The longitude.
-   * @param {number} radiusDegrees The search radius in degrees.
-   * @returns {Promise<{lat: number, lng: number, timestamp: number, visits: number} | null>}
+   * Finds the nearest location point and returns aggregated data for its grid cell.
    */
   async getNearestPoint(lat: number, lng: number, radiusDegrees: number): Promise<{lat: number, lng: number, timestamp: number, visits: number} | null> {
-    if (!this.db) return null;
+    const latE7 = Math.round(lat * 1e7);
+    const lngE7 = Math.round(lng * 1e7);
+    const radE7 = Math.round(radiusDegrees * 1e7);
 
-    return this.withLock(async () => {
-      let nearest: {lat: number, lng: number, timestamp: number, visits: number} | null = null;
-      const latE7 = Math.round(lat * 1e7);
-      const lngE7 = Math.round(lng * 1e7);
-      const radE7 = Math.round(radiusDegrees * 1e7);
-
-      const sql = `
-        SELECT lat_e7, lng_e7, latest_timestamp, visit_count 
+    // 1. Find the nearest individual point to determine which grid cell we are looking at
+    const rows = await this.send('query', {
+      sql: `
+        SELECT lat_e7, lng_e7, grid_id
         FROM locations 
         WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
         LIMIT ${APP_CONFIG.NEAREST_QUERY_LIMIT}
-      `;
+      `,
+      bind: [latE7 - radE7, latE7 + radE7, lngE7 - radE7, lngE7 + radE7]
+    }) as { lat_e7: number, lng_e7: number, grid_id: number }[];
+
+    if (rows.length === 0) return null;
+
+    let nearestPoint: { lat_e7: number, lng_e7: number, grid_id: number } | null = null;
+    let minBaseDist = Infinity;
+
+    for (const row of rows) {
+      const dLat = row.lat_e7 - latE7;
+      const dLng = row.lng_e7 - lngE7;
+      const distSq = dLat * dLat + dLng * dLng;
       
-      try {
-        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          this.sqlite3.bind_int(stmt, 1, latE7 - radE7);
-          this.sqlite3.bind_int(stmt, 2, latE7 + radE7);
-          this.sqlite3.bind_int(stmt, 3, lngE7 - radE7);
-          this.sqlite3.bind_int(stmt, 4, lngE7 + radE7);
-
-          let minBaseDist = Infinity;
-          while (await this.sqlite3.step(stmt) === SQLite.SQLITE_ROW) {
-            const pLatE7 = this.sqlite3.column_int(stmt, 0);
-            const pLngE7 = this.sqlite3.column_int(stmt, 1);
-            const pTime = Number(this.sqlite3.column_int64(stmt, 2));
-            const pVisits = this.sqlite3.column_int(stmt, 3);
-            
-            const dLat = pLatE7 - latE7;
-            const dLng = pLngE7 - lngE7;
-            const distSq = dLat * dLat + dLng * dLng;
-            
-            if (distSq < minBaseDist) {
-              minBaseDist = distSq;
-              nearest = { lat: pLatE7 / 1e7, lng: pLngE7 / 1e7, timestamp: pTime, visits: pVisits };
-            }
-          }
-        }
-      } catch (e) {
-        console.error("DatabaseService: Nearest query error", e);
+      if (distSq < minBaseDist) {
+        minBaseDist = distSq;
+        nearestPoint = row;
       }
-      return nearest;
-    });
+    }
+
+    if (!nearestPoint) return null;
+
+    // 2. Get aggregated stats for that specific grid cell
+    const statsRows = await this.send('query', {
+      sql: `
+        SELECT 
+          MAX(latest_timestamp) as latest_timestamp, 
+          SUM(visit_count) as total_visits 
+        FROM locations 
+        WHERE grid_id = ?
+      `,
+      bind: [nearestPoint.grid_id]
+    }) as { latest_timestamp: number, total_visits: number }[];
+
+    const stats = statsRows[0];
+
+    return { 
+      lat: nearestPoint.lat_e7 / 1e7, 
+      lng: nearestPoint.lng_e7 / 1e7, 
+      timestamp: stats.latest_timestamp, 
+      visits: stats.total_visits 
+    };
   }
 
   /**
-   * Performs a bulk insert of signal points within a transaction.
-   * Handles snapping and deduplication via triggers.
-   * @param {SignalPoint[]} points Array of signal points to insert.
-   * @returns {Promise<void>}
+   * Clears all data.
    */
-  async bulkInsertSignals(points: SignalPoint[]) {
-    if (!this.db || !this.sqlite3) throw new Error("Database not initialized");
-    if (points.length === 0) return;
-
-    return this.withLock(async () => {
-      await this.sqlite3.exec(this.db, 'BEGIN TRANSACTION');
-
-      try {
-        let beforeSignalCount = 0;
-        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM signals', (row: any[]) => beforeSignalCount = row[0]);
-
-        const sql = `INSERT OR IGNORE INTO signals (lat_e7, lng_e7, timestamp) VALUES (?, ?, ?)`;
-        
-        for await (const stmt of this.sqlite3.statements(this.db, sql)) {
-          for (const p of points) {
-            this.sqlite3.bind_int(stmt, 1, snap(p.latE7));
-            this.sqlite3.bind_int(stmt, 2, snap(p.lngE7));
-            this.sqlite3.bind_int64(stmt, 3, BigInt(p.timestamp));
-            await this.sqlite3.step(stmt);
-            this.sqlite3.reset(stmt);
-          }
-          break; 
-        }
-
-        await this.sqlite3.exec(this.db, 'COMMIT');
-        
-        let afterSignalCount = 0;
-        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM signals', (row: any[]) => afterSignalCount = row[0]);
-        
-        console.log(`DatabaseService: Signals before: ${beforeSignalCount}, after: ${afterSignalCount} (Added: ${afterSignalCount - beforeSignalCount})`);
-        
-        let finalLocationCount = 0;
-        await this.sqlite3.exec(this.db, 'SELECT COUNT(*) FROM locations', (row: any[]) => {
-          finalLocationCount = row[0];
-        });
-        console.log(`DatabaseService: Unique grid cells (locations): ${finalLocationCount}`);
-      } catch (e) {
-        console.error("DatabaseService: Bulk insert error", e);
-        await this.sqlite3.exec(this.db, 'ROLLBACK');
-        throw e;
-      }
-    });
+  async clearDatabase() {
+    await this.send('reset');
+    console.log("DatabaseService: Database cleared.");
   }
 
   /**
-   * Drastic measure: deletes the entire IndexedDB and reloads the page.
+   * Resets the database and reloads.
    */
   async resetDatabase() {
-    if (this.db) {
-      await this.sqlite3.close(this.db);
-    }
+    await this.send('reset');
+    window.location.reload();
+  }
+
+  /**
+   * Exports the entire database file as a .db download.
+   */
+  async exportDatabase() {
+    console.log("DatabaseService: Exporting database...");
+    const bytes = await this.send('export') as Uint8Array;
     
-    return new Promise<void>((resolve, reject) => {
-      const request = indexedDB.deleteDatabase('world_fog_of_war');
-      request.onsuccess = () => {
-        console.log("Database deleted successfully");
-        window.location.reload();
-        resolve();
-      };
-      request.onerror = () => {
-        console.error("Error deleting database");
-        reject(new Error("Failed to delete database"));
-      };
-      request.onblocked = () => {
-        console.warn("Delete database blocked. Please close other tabs.");
-        window.location.reload();
-      };
-    });
+    const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    link.href = url;
+    link.download = `world-fog-of-war-${timestamp}.db`;
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    console.log("DatabaseService: Export complete.");
+  }
+
+  /**
+   * Shared helper for grid IDs.
+   */
+  public getGridId(lat: number, lng: number): number {
+    const gridSizeDegrees = APP_CONFIG.UNLOCK_GRID_SIZE_METERS / APP_CONFIG.METERS_PER_DEGREE;
+    const gridSizeE7 = Math.round(gridSizeDegrees * 1e7);
+    const latE7 = Math.round(lat * 1e7);
+    const lngE7 = Math.round(lng * 1e7);
+    const latGrid = Math.floor(latE7 / gridSizeE7);
+    const lngGrid = Math.floor(lngE7 / gridSizeE7);
+    return (latGrid * 10000000) + lngGrid;
   }
 }
 

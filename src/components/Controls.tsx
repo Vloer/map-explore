@@ -9,6 +9,7 @@ interface ControlsProps {
   toggleHeatmap: () => void;
   onUploadClick: () => void;
   onClearDatabase: () => void;
+  onExportDatabase: () => void;
   loading: boolean;
 }
 
@@ -26,6 +27,7 @@ export function Controls({
   toggleHeatmap,
   onUploadClick,
   onClearDatabase,
+  onExportDatabase,
   loading
 }: ControlsProps) {
   return (
@@ -112,6 +114,22 @@ export function Controls({
           }}
         >
           {loading ? 'Processing...' : 'Import History'}
+        </button>
+
+        <button 
+          onClick={onExportDatabase}
+          style={{
+            backgroundColor: 'transparent',
+            color: '#4CAF50',
+            border: '1px solid #4CAF50',
+            borderRadius: '6px',
+            padding: '8px 16px',
+            cursor: 'pointer',
+            fontSize: '13px',
+            fontWeight: '600'
+          }}
+        >
+          Export DB
         </button>
 
         <button 
