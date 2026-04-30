@@ -11,6 +11,8 @@ interface ControlsProps {
   onClearDatabase: () => void;
   onExportDatabase: () => void;
   loading: boolean;
+  showGrid: boolean;
+  toggleGrid: (enabled: boolean) => void;
 }
 
 /**
@@ -28,7 +30,9 @@ export function Controls({
   onUploadClick,
   onClearDatabase,
   onExportDatabase,
-  loading
+  loading,
+  showGrid,
+  toggleGrid
 }: ControlsProps) {
   return (
     <div style={{
@@ -96,6 +100,23 @@ export function Controls({
           }}
         >
           {heatmapEnabled ? 'Hide Heatmap' : 'Show Heatmap'}
+        </button>
+
+        <button 
+          onClick={() => toggleGrid(!showGrid)}
+          style={{
+            backgroundColor: showGrid ? '#9C27B0' : '#444',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            padding: '8px 16px',
+            cursor: 'pointer',
+            fontSize: '13px',
+            fontWeight: '600',
+            transition: 'all 0.2s'
+          }}
+        >
+          {showGrid ? 'Hide Grid' : 'Show Grid'}
         </button>
 
         <button 

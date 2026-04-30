@@ -32,7 +32,9 @@ function App() {
     updateFogRadius, 
     updateHeatmapStrength, 
     toggleHeatmap: toggleHeatmapLayer,
-    setHighlight
+    setHighlight,
+    showGrid,
+    toggleGrid
   } = useLayers(map, isMapReady);
   
   const { 
@@ -228,6 +230,8 @@ function App() {
         onClearDatabase={clearDatabase}
         onExportDatabase={() => databaseService.exportDatabase()}
         loading={loading}
+        showGrid={showGrid}
+        toggleGrid={toggleGrid}
       />
       
       <input type="file" accept=".json,.gpx" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />

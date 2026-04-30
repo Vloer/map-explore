@@ -77,6 +77,7 @@ export const APP_CONFIG = {
   TILE_SIZE: 256,
   SQLITE_PAGE_SIZE: 4096,
   NEAREST_QUERY_LIMIT: 200,
+  MIN_GRID_SHOW_ZOOM: 16,
 };
 
 export const PLACE_TYPES: { [key: string]: number } = {
