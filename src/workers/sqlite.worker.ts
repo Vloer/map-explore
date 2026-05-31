@@ -9,7 +9,7 @@ const error = (...args: unknown[]) => console.error('[SQLiteWorker]', ...args);
 /**
  * Initializes the SQLite database in OPFS.
  */
-async function init() {
+async function init(config?: { gridMeters: number }) {
   if (db) return;
 
   try {
@@ -73,11 +73,14 @@ async function init() {
       CREATE INDEX IF NOT EXISTS idx_grid_id ON street_grid_index(grid_id);
     `);
 
-    // Define the trigger once
-    const gridSizeDegrees = 15 / 111111; // Standard grid size fallback if not passed
+    // Define the trigger with dynamic grid size
+    const gridSizeMeters = config?.gridMeters || 30;
+    const gridSizeDegrees = gridSizeMeters / 111111; 
     const gridSizeE7 = Math.round(gridSizeDegrees * 1e7);
+    
     db.exec(`
-      CREATE TRIGGER IF NOT EXISTS ai_signals AFTER INSERT ON signals BEGIN
+      DROP TRIGGER IF EXISTS ai_signals;
+      CREATE TRIGGER ai_signals AFTER INSERT ON signals BEGIN
         INSERT INTO locations (lat_e7, lng_e7, grid_id, visit_count, latest_timestamp)
         VALUES (
           new.lat_e7, 
@@ -94,14 +97,12 @@ async function init() {
     `);
 
     // Enable expanded SQL tracing
-    // We use the low-level capi to get the expanded SQL (with values) during execution
     sqlite3.capi.sqlite3_trace_v2(
       db.pointer,
       sqlite3.capi.SQLITE_TRACE_STMT,
       (_type: number, _context: any, stmtPtr: number) => {
         const expanded = sqlite3.capi.sqlite3_expanded_sql(stmtPtr);
         if (expanded) {
-          // Log a sample of bulk operations to avoid flooding, but show everything else
           if (expanded.includes('INSERT') && Math.random() > 0.05) return 0;
           console.log(`[SQL TRACE] ${expanded}`);
         }
@@ -110,7 +111,7 @@ async function init() {
       null
     );
 
-    log('Tables initialized and tracing enabled.');
+    log(`Tables initialized (Grid: ${gridSizeMeters}m) and tracing enabled.`);
   } catch (err) {
     error('Initialization failed:', err);
     throw err;
@@ -119,8 +120,8 @@ async function init() {
 
 // Map of handlers for different message types
 const handlers: Record<string, (data: any) => Promise<unknown>> = {
-  async init() {
-    await init();
+  async init(data) {
+    await init(data);
     return true;
   },
 
@@ -133,6 +134,7 @@ const handlers: Record<string, (data: any) => Promise<unknown>> = {
   async query({ sql, bind }: { sql: string; bind?: unknown[] }) {
     if (!db) await init();
     const rows: unknown[] = [];
+    
     db.exec({
       sql,
       bind,
@@ -203,7 +205,6 @@ const handlers: Record<string, (data: any) => Promise<unknown>> = {
 
   async export() {
     if (!db) await init();
-    // For persistent DBs (like OpfsDb), use the capi helper to export the bytes
     return sqlite3.capi.sqlite3_js_db_export(db);
   }
 };
@@ -224,4 +225,3 @@ self.onmessage = async (event: MessageEvent) => {
     self.postMessage({ id, type: 'ERROR', error: `Unknown message type: ${type}` });
   }
 };
-

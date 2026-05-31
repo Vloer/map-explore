@@ -17,8 +17,8 @@ export const APP_CONFIG = {
   GEOAPIFY_ROADS_LAYER: 'transportation_name', // Has names and geometries in OpenMapTiles
   
   // Unlocking settings
-  UNLOCK_GRID_SIZE_METERS: 15,
-  UNLOCK_DISTANCE_THRESHOLD_METERS: 20,
+  UNLOCK_GRID_SIZE_METERS: 30,
+  UNLOCK_DISTANCE_THRESHOLD_METERS: 40,
 
   // Reveal radius settings (meters)
   BASE_FOG_REVEAL_RADIUS: 100,

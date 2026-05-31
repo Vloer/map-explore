@@ -1,6 +1,6 @@
 import { APP_CONFIG } from '../Config';
 import { metersToE7, Logger } from '../Util';
-import type { Street, BoundingBox } from '../types';
+import type { Street } from '../types';
 
 /**
  * Represents a processed signal point to be inserted into the database.
@@ -60,8 +60,8 @@ export class DatabaseService {
           reject(err);
         };
 
-        // Trigger initialization
-        this.send('init').then(() => {
+        // Trigger initialization with configured grid size
+        this.send('init', { gridMeters: APP_CONFIG.UNLOCK_GRID_SIZE_METERS }).then(() => {
           console.log('DatabaseService: Worker initialized.');
           resolve();
         }).catch(reject);
@@ -310,7 +310,7 @@ export class DatabaseService {
    */
   async exportDatabase() {
     console.log("DatabaseService: Exporting database...");
-    const bytes = await this.send('export') as Uint8Array;
+    const bytes = await this.send('export') as BlobPart;
     
     const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
     const url = URL.createObjectURL(blob);

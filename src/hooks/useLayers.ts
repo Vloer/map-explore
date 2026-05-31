@@ -4,7 +4,6 @@ import { FogLayer } from '../FogLayer';
 import { HeatmapLayer } from '../HeatmapLayer';
 import { databaseService } from '../services/DatabaseService';
 import { APP_CONFIG } from '../Config';
-import { metersToE7 } from '../Util';
 
 /**
  * Hook to manage the map layers (Fog and Heatmap).
