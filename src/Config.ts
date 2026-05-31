@@ -71,6 +71,12 @@ export const APP_CONFIG = {
   // Cache settings
   STREETS_CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
+  // Ulogger settings
+  ULOGGER_CONFIG: {
+    BRIDGE_URL: import.meta.env.VITE_ULOGGER_BRIDGE_URL || '',
+    TOKEN: import.meta.env.VITE_ULOGGER_TOKEN || '',
+  },
+
   // Constants
   METERS_PER_DEGREE: 111111,
   EARTH_RADIUS_METERS: 6378137,

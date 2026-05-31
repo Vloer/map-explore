@@ -10,6 +10,7 @@ interface ControlsProps {
   onUploadClick: () => void;
   onClearDatabase: () => void;
   onExportDatabase: () => void;
+  onUloggerClick: () => void;
   loading: boolean;
   showGrid: boolean;
   toggleGrid: (enabled: boolean) => void;
@@ -30,6 +31,7 @@ export function Controls({
   onUploadClick,
   onClearDatabase,
   onExportDatabase,
+  onUloggerClick,
   loading,
   showGrid,
   toggleGrid
@@ -117,6 +119,22 @@ export function Controls({
           }}
         >
           {showGrid ? 'Hide Grid' : 'Show Grid'}
+        </button>
+
+        <button 
+          onClick={onUloggerClick}
+          style={{
+            backgroundColor: '#00e5ff',
+            color: '#000',
+            border: 'none',
+            borderRadius: '6px',
+            padding: '8px 16px',
+            cursor: 'pointer',
+            fontSize: '13px',
+            fontWeight: '600',
+          }}
+        >
+          Sync Ulogger
         </button>
 
         <button 

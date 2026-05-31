@@ -18,6 +18,7 @@ import { Tooltip } from './components/Tooltip';
 import { HeatmapLegend } from './components/HeatmapLegend';
 import { StreetListPanel } from './components/StreetListPanel';
 import { LoadingOverlay } from './components/LoadingOverlay';
+import { UloggerSyncModal } from './components/UloggerSyncModal';
 
 /**
  * Main application component for the World Fog of War map.
@@ -53,6 +54,7 @@ function App() {
   const [showStreetPanel, setShowStreetPanel] = useState(false);
   const [streetHighlight, setStreetHighlight] = useState<any>(null);
   const [initError, setInitError] = useState<string | null>(null);
+  const [uloggerModalOpen, setUloggerModalOpen] = useState(false);
 
   // Initialize database on mount
   useEffect(() => {
@@ -229,11 +231,18 @@ function App() {
         onUploadClick={onButtonClick}
         onClearDatabase={clearDatabase}
         onExportDatabase={() => databaseService.exportDatabase()}
+        onUloggerClick={() => setUloggerModalOpen(true)}
         loading={loading}
         showGrid={showGrid}
         toggleGrid={toggleGrid}
       />
       
+      <UloggerSyncModal 
+        isOpen={uloggerModalOpen} 
+        onClose={() => setUloggerModalOpen(false)} 
+        onImportComplete={onImportComplete}
+      />
+
       <input type="file" accept=".json,.gpx" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
     </div>
   );

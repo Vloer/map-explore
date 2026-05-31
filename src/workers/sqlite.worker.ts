@@ -71,6 +71,11 @@ async function init(config?: { gridMeters: number }) {
         PRIMARY KEY (street_name, place_name, grid_id)
       );
       CREATE INDEX IF NOT EXISTS idx_grid_id ON street_grid_index(grid_id);
+
+      CREATE TABLE IF NOT EXISTS synced_tracks (
+        ulogger_id INTEGER PRIMARY KEY,
+        sync_date INTEGER
+      );
     `);
 
     // Define the trigger with dynamic grid size

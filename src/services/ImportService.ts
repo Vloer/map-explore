@@ -167,6 +167,35 @@ export class ImportService {
     // Delegate writing to DatabaseService
     await databaseService.bulkInsertSignals(points);
   }
+
+  /**
+   * Imports a list of raw coordinates and timestamps from Ulogger.
+   */
+  async bulkImportPoints(rawPoints: { latitude: number, longitude: number, time: string }[]) {
+    const points: SignalPoint[] = [];
+    let lastLatE7 = 0;
+    let lastLngE7 = 0;
+
+    for (const p of rawPoints) {
+      const latE7 = Math.round(p.latitude * 1e7);
+      const lngE7 = Math.round(p.longitude * 1e7);
+      
+      // Parse string timestamp (MySQL format) into MS
+      const timestamp = new Date(p.time).getTime();
+      
+      if (isNaN(timestamp)) continue;
+
+      if (getDistanceE7(lastLatE7, lastLngE7, latE7, lngE7) > APP_CONFIG.IMPORT_DECIMATION_METERS) {
+        points.push({ latE7, lngE7, timestamp });
+        lastLatE7 = latE7;
+        lastLngE7 = lngE7;
+      }
+    }
+
+    if (points.length > 0) {
+      await databaseService.bulkInsertSignals(points);
+    }
+  }
 }
 
 export const importService = new ImportService();

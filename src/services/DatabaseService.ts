@@ -306,6 +306,29 @@ export class DatabaseService {
   }
 
   /**
+   * Gets a list of track IDs that have already been synced from ulogger.
+   */
+  async getSyncedUloggerTracks(): Promise<Set<number>> {
+    const rows = await this.send('query', {
+      sql: 'SELECT ulogger_id FROM synced_tracks'
+    }) as { ulogger_id: number }[];
+    return new Set(rows.map(r => r.ulogger_id));
+  }
+
+  /**
+   * Marks a list of track IDs as synced.
+   */
+  async markTracksAsSynced(ids: number[]) {
+    const now = Date.now();
+    for (const id of ids) {
+      await this.send('exec', {
+        sql: 'INSERT OR IGNORE INTO synced_tracks (ulogger_id, sync_date) VALUES (?, ?)',
+        bind: [id, now]
+      });
+    }
+  }
+
+  /**
    * Exports the entire database file as a .db download.
    */
   async exportDatabase() {
