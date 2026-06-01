@@ -12,7 +12,7 @@ interface UloggerSyncModalProps {
 
 export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({ isOpen, onClose, onImportComplete }) => {
   const [tracks, setTracks] = useState<UloggerTrack[]>([]);
-  const [syncedIds, setSyncedIds] = useState<Set<number>>(new Set());
+  const [syncedTracks, setSyncedTracks] = useState<Map<number, string>>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,18 +28,24 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({ isOpen, onCl
     setLoading(true);
     setError(null);
     try {
-      const [remoteTracks, localSynced] = await Promise.all([
+      const [remoteTracks, localSyncedMap] = await Promise.all([
         uloggerService.listTracks(),
         databaseService.getSyncedUloggerTracks()
       ]);
-      setTracks(remoteTracks);
-      setSyncedIds(localSynced);
       
-      // Auto-select new tracks
-      const newIds = remoteTracks
-        .filter(t => !localSynced.has(t.id))
-        .map(t => t.id);
-      setSelectedIds(new Set(newIds));
+      // Filter to only show new or updated tracks
+      const updateableTracks = remoteTracks.filter(t => {
+        const id = Number(t.id); // Remote IDs might be strings from PHP
+        const lastSynced = localSyncedMap.get(id);
+        const needsUpdate = !lastSynced || new Date(t.last_update) > new Date(lastSynced);
+        return needsUpdate;
+      });
+
+      setTracks(remoteTracks);
+      setSyncedTracks(localSyncedMap);
+      
+      // Auto-select updateable tracks
+      setSelectedIds(new Set(updateableTracks.map(t => Number(t.id))));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -68,7 +74,13 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({ isOpen, onCl
       
       if (points.length > 0) {
         await importService.bulkImportPoints(points);
-        await databaseService.markTracksAsSynced(idsArray);
+        
+        // Prepare sync markers with latest timestamps
+        const syncMarkers = tracks
+          .filter(t => selectedIds.has(Number(t.id)))
+          .map(t => ({ id: Number(t.id), lastUpdate: t.last_update }));
+          
+        await databaseService.markTracksAsSynced(syncMarkers);
         onImportComplete();
         onClose();
       } else {
@@ -82,6 +94,12 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({ isOpen, onCl
   };
 
   if (!isOpen) return null;
+
+  const displayTracks = tracks.filter(t => {
+    const id = Number(t.id);
+    const lastSynced = syncedTracks.get(id);
+    return !lastSynced || new Date(t.last_update) > new Date(lastSynced);
+  });
 
   return (
     <div className="modal-overlay">
@@ -100,30 +118,47 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({ isOpen, onCl
             <div className="track-list">
               {tracks.length === 0 ? (
                 <p>No tracks found on server.</p>
+              ) : displayTracks.length === 0 ? (
+                <p style={{ padding: '20px', textAlign: 'center', color: '#888' }}>
+                  All tracks on server have already been synced.
+                </p>
               ) : (
                 <table>
                   <thead>
                     <tr>
                       <th>Select</th>
                       <th>Track Name</th>
+                      <th>Status</th>
                       <th>Date</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {tracks.map(track => {
-                      const isSynced = syncedIds.has(track.id);
+                    {displayTracks.map(track => {
+                      const id = Number(track.id);
+                      const isNew = !syncedTracks.has(id);
                       const dateStr = track.time ? new Date(track.time).toLocaleDateString() : 'Unknown';
 
                       return (
-                        <tr key={track.id} className={isSynced ? 'synced' : ''}>
+                        <tr key={id}>
                           <td>
                             <input 
                               type="checkbox" 
-                              checked={selectedIds.has(track.id)}
-                              onChange={() => toggleTrack(track.id)}
+                              checked={selectedIds.has(id)}
+                              onChange={() => toggleTrack(id)}
                             />
                           </td>
-                          <td>{track.name || `Track ${track.id}`}</td>
+                          <td>{track.name || `Track ${id}`}</td>
+                          <td>
+                            <span style={{ 
+                              fontSize: '0.8rem', 
+                              padding: '2px 6px', 
+                              borderRadius: '4px',
+                              background: isNew ? 'rgba(0, 229, 255, 0.2)' : 'rgba(255, 152, 0, 0.2)',
+                              color: isNew ? '#00e5ff' : '#ff9800'
+                            }}>
+                              {isNew ? 'New' : 'Update'}
+                            </span>
+                          </td>
                           <td>{dateStr}</td>
                         </tr>
                       );
@@ -142,7 +177,7 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({ isOpen, onCl
             onClick={handleSync} 
             disabled={syncing || selectedIds.size === 0 || loading}
           >
-            {syncing ? 'Syncing...' : `Import ${selectedIds.size} Tracks`}
+            {syncing ? 'Syncing...' : `Import ${selectedIds.size} track${selectedIds.size > 1 ? 's' : ''}`}
           </button>
         </div>
       </div>

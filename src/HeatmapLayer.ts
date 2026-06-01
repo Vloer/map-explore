@@ -161,9 +161,9 @@ export class HeatmapLayer {
     const center = this.map.getCenter();
     const pixelsPerMeter = getPixelsPerMeter(center.lat, zoom);
     
+    // Constant base radius in meters, but we ensure it doesn't get too small in pixels
     const baseRadiusMeters = this.meterRadius * APP_CONFIG.HEATMAP_RADIUS_MULTIPLIER;
-    const effectiveMeterRadius = Math.max(baseRadiusMeters, this.detailMeters * 0.707);
-    const radius = Math.max(5, effectiveMeterRadius * pixelsPerMeter);
+    const radius = Math.max(15, baseRadiusMeters * pixelsPerMeter);
 
     this.ctx.globalAlpha = APP_CONFIG.HEATMAP_OPACITY;
     this.ctx.globalCompositeOperation = 'screen';
@@ -178,10 +178,17 @@ export class HeatmapLayer {
       }
 
       const hue = this.getHue(p.visits);
+      
+      // Calculate intensity based on visits ratio
+      const effectiveVisits = Math.max(0, p.visits - 2);
+      const effectiveMax = Math.max(1, this.maxVisits - 2);
+      const intensity = 0.3 + (Math.min(effectiveVisits / effectiveMax, 1) * 0.7);
+
       const gradient = this.ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, radius);
       
-      gradient.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.8)`);
-      gradient.addColorStop(0.3, `hsla(${hue}, 100%, 50%, 0.4)`);
+      // Use HSLA with the calculated intensity for consistent scaling
+      gradient.addColorStop(0, `hsla(${hue}, 100%, 50%, ${intensity})`);
+      gradient.addColorStop(0.5, `hsla(${hue}, 100%, 50%, ${intensity * 0.4})`);
       gradient.addColorStop(1, `hsla(${hue}, 100%, 50%, 0)`);
 
       this.ctx.fillStyle = gradient;

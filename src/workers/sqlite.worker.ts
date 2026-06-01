@@ -74,6 +74,7 @@ async function init(config?: { gridMeters: number }) {
 
       CREATE TABLE IF NOT EXISTS synced_tracks (
         ulogger_id INTEGER PRIMARY KEY,
+        last_data_timestamp TEXT,
         sync_date INTEGER
       );
     `);

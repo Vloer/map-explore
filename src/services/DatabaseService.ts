@@ -307,23 +307,29 @@ export class DatabaseService {
 
   /**
    * Gets a list of track IDs that have already been synced from ulogger.
+   * Returns a Map of track ID -> last_data_timestamp (string)
    */
-  async getSyncedUloggerTracks(): Promise<Set<number>> {
+  async getSyncedUloggerTracks(): Promise<Map<number, string>> {
     const rows = await this.send('query', {
-      sql: 'SELECT ulogger_id FROM synced_tracks'
-    }) as { ulogger_id: number }[];
-    return new Set(rows.map(r => r.ulogger_id));
+      sql: 'SELECT ulogger_id, last_data_timestamp FROM synced_tracks'
+    }) as { ulogger_id: number, last_data_timestamp: string }[];
+    
+    const synced = new Map<number, string>();
+    for (const row of rows) {
+      synced.set(row.ulogger_id, row.last_data_timestamp);
+    }
+    return synced;
   }
 
   /**
-   * Marks a list of track IDs as synced.
+   * Marks a list of track IDs as synced with their latest data timestamp.
    */
-  async markTracksAsSynced(ids: number[]) {
+  async markTracksAsSynced(tracks: { id: number, lastUpdate: string }[]) {
     const now = Date.now();
-    for (const id of ids) {
+    for (const track of tracks) {
       await this.send('exec', {
-        sql: 'INSERT OR IGNORE INTO synced_tracks (ulogger_id, sync_date) VALUES (?, ?)',
-        bind: [id, now]
+        sql: 'INSERT OR REPLACE INTO synced_tracks (ulogger_id, last_data_timestamp, sync_date) VALUES (?, ?, ?)',
+        bind: [track.id, track.lastUpdate, now]
       });
     }
   }

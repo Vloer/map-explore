@@ -4,6 +4,7 @@ export interface UloggerTrack {
   id: number;
   name: string;
   time: string;
+  last_update: string;
 }
 
 export interface UloggerPoint {
