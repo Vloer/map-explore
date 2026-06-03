@@ -45,8 +45,9 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
     <div style={{
       backgroundColor: 'rgba(42, 42, 46, 0.95)',
       borderRadius: '8px',
-      width: '320px',
-      maxHeight: '60vh',
+      width: '100%',
+      maxWidth: '320px',
+      maxHeight: '50vh',
       display: 'flex',
       flexDirection: 'column',
       color: 'white',
@@ -54,7 +55,8 @@ export function StreetListPanel({ streets, onStreetClick, isLoading, regionName,
       border: '1px solid #444',
       overflow: 'hidden',
       marginTop: '10px',
-      animation: 'slideDown 0.3s ease-out'
+      animation: 'slideDown 0.3s ease-out',
+      boxSizing: 'border-box'
     }}>
       <div style={{ padding: '12px 15px', borderBottom: '1px solid #444', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#3a3a40' }}>
         <h3 style={{ margin: 0, fontSize: '0.9rem' }}>Streets in {regionName}</h3>

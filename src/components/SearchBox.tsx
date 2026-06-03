@@ -15,15 +15,22 @@ interface SearchBoxProps {
  */
 export function SearchBox({ searchQuery, setSearchQuery, handleSearch, isSearching }: SearchBoxProps) {
   return (
-    <form onSubmit={handleSearch} style={{ display: 'flex', gap: '5px' }}>
+    <form onSubmit={handleSearch} style={{ display: 'flex', gap: '5px', width: '100%', maxWidth: '300px' }}>
       <input
         type="text"
         placeholder="Search location..."
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
-        style={{ padding: '8px 12px', borderRadius: '4px', border: 'none', boxShadow: '0 2px 5px rgba(0,0,0,0.2)', width: '200px' }}
+        style={{ 
+          padding: '8px 12px', 
+          borderRadius: '4px', 
+          border: 'none', 
+          boxShadow: '0 2px 5px rgba(0,0,0,0.2)', 
+          flexGrow: 1,
+          minWidth: '0' 
+        }}
       />
-      <button type="submit" disabled={isSearching} style={{ padding: '8px 12px', background: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+      <button type="submit" disabled={isSearching} style={{ padding: '8px 12px', background: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
         {isSearching ? '...' : 'Search'}
       </button>
     </form>

@@ -10,6 +10,7 @@ import { databaseService } from './services/DatabaseService';
 import { APP_CONFIG } from './Config';
 import { calculateCenter } from './Util';
 import type { Street } from './types';
+import './App.css';
 
 import { SearchBox } from './components/SearchBox';
 import { RegionStatsCard } from './components/RegionStatsCard';
@@ -166,10 +167,10 @@ function App() {
   }, [regionStats]);
 
   return (
-    <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', backgroundColor: '#1a1a1a', position: 'relative' }}>
-      <div id="map" ref={mapContainer} style={{ flexGrow: 1, height: '100%', width: '100%' }} />
+    <div className="app-container">
+      <div id="map" ref={mapContainer} />
 
-      <div style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 30, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div className="top-left-panel">
         <SearchBox 
           searchQuery={searchQuery} 
           setSearchQuery={setSearchQuery} 
