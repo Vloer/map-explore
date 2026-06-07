@@ -21,15 +21,16 @@ import { HeatmapLegend } from './components/HeatmapLegend';
 import { StreetListPanel } from './components/StreetListPanel';
 import { LoadingOverlay } from './components/LoadingOverlay';
 import { UloggerSyncModal } from './components/UloggerSyncModal';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { LoginScreen } from './components/LoginScreen';
 
 /**
- * Main application component for the World Fog of War map.
- * Manages map state, layers, location search, and user data import.
- * 
- * @returns {JSX.Element} The rendered application.
+ * The internal content of the app, gated by authentication.
  */
-function App() {
+function AppContent() {
+  const { session, logout } = useAuth();
   const { mapContainer, map, isMapReady } = useMap();
+
   const { 
     refreshLayers, 
     updateFogRadius, 
@@ -88,7 +89,7 @@ function App() {
 
   // Auto-sync timer logic
   useEffect(() => {
-    if (!autoSyncActive) return;
+    if (!autoSyncActive || !session) return;
 
     const interval = setInterval(async () => {
       // Check if expired
@@ -101,19 +102,21 @@ function App() {
 
       console.log('Auto-Sync: Checking for updates for tracks:', autoSyncIds);
       try {
-        // IMPORTANT: Must pass autoSyncIds to only sync selected tracks
-        const syncedCount = await uloggerService.syncAllPending(autoSyncIds);
+        const syncedCount = await uloggerService.syncAllPending(session.token, autoSyncIds);
         if (syncedCount > 0) {
           console.log(`Auto-Sync: Synced ${syncedCount} tracks.`);
           onImportComplete();
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Auto-Sync Error:', err);
+        if (err.status === 401) {
+          logout();
+        }
       }
     }, 60000); // 1 minute
 
     return () => clearInterval(interval);
-  }, [autoSyncActive, autoSyncIds]);
+  }, [autoSyncActive, autoSyncIds, session, logout]);
 
   const toggleAutoSync = () => {
     if (autoSyncActive) {
@@ -127,16 +130,19 @@ function App() {
 
   const startAutoSync = (ids: number[]) => {
     const numericIds = ids.map(Number);
-    console.log('App: Starting Auto-Sync with IDs:', numericIds);
     setAutoSyncIds(numericIds);
     localStorage.setItem('ulogger_auto_sync_ids', JSON.stringify(numericIds));
     
-    if (numericIds.length > 0) {
+    if (numericIds.length > 0 && session) {
       setAutoSyncActive(true);
       localStorage.setItem('ulogger_auto_sync_expiry', String(Date.now() + 2 * 60 * 60 * 1000));
-      uloggerService.syncAllPending(numericIds).then(count => {
-        if (count > 0) onImportComplete();
-      });
+      uloggerService.syncAllPending(session.token, numericIds)
+        .then(count => {
+          if (count > 0) onImportComplete();
+        })
+        .catch(err => {
+          if (err.status === 401) logout();
+        });
     } else {
       setAutoSyncActive(false);
       localStorage.removeItem('ulogger_auto_sync_expiry');
@@ -249,11 +255,44 @@ function App() {
     }
   }, [regionStats]);
 
+  if (!session) return null; // Should be handled by parent
+
   return (
     <div className="app-container">
       <div id="map" ref={mapContainer} />
 
       <div className="top-left-panel">
+        <div style={{ 
+          background: 'rgba(33, 150, 243, 0.9)', 
+          padding: '8px 12px', 
+          borderRadius: '6px', 
+          color: 'white', 
+          fontSize: '13px', 
+          fontWeight: 'bold',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          borderLeft: '4px solid #fff',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '15px'
+        }}>
+          <span>User: {session.username} ({session.role})</span>
+          <button 
+            onClick={logout}
+            style={{ 
+              background: 'rgba(255,255,255,0.2)', 
+              border: 'none', 
+              color: 'white', 
+              fontSize: '10px', 
+              padding: '4px 8px', 
+              borderRadius: '4px', 
+              cursor: 'pointer' 
+            }}
+          >
+            Logout
+          </button>
+        </div>
+
         <SearchBox 
           searchQuery={searchQuery} 
           setSearchQuery={setSearchQuery} 
@@ -321,6 +360,7 @@ function App() {
         toggleGrid={toggleGrid}
         autoSyncActive={autoSyncActive}
         onToggleAutoSync={toggleAutoSync}
+        isAdmin={session.role === 'admin'}
       />
       
       <UloggerSyncModal 
@@ -330,10 +370,43 @@ function App() {
         mode={uloggerModalMode}
         onStartAutoSync={startAutoSync}
         initialSelectedIds={autoSyncIds}
+        isAdmin={session.role === 'admin'}
       />
 
       <input type="file" accept=".json,.gpx" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
     </div>
+  );
+}
+
+/**
+ * Auth Gatekeeper
+ */
+function Gatekeeper() {
+  const { session } = useAuth();
+
+  if (session === undefined) {
+    return (
+      <div style={{ height: '100dvh', width: '100vw', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1a1a1a', color: 'white' }}>
+        <div className="loading">Verifying session...</div>
+      </div>
+    );
+  }
+
+  if (session === null) {
+    return <LoginScreen />;
+  }
+
+  return <AppContent />;
+}
+
+/**
+ * Main application component.
+ */
+function App() {
+  return (
+    <AuthProvider>
+      <Gatekeeper />
+    </AuthProvider>
   );
 }
 

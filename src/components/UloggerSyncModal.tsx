@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { uloggerService, type UloggerTrack } from '../services/UloggerService';
 import { databaseService } from '../services/DatabaseService';
 import { importService } from '../services/ImportService';
+import { useAuth } from '../contexts/AuthContext';
 import './UloggerSyncModal.css';
 
 interface UloggerSyncModalProps {
@@ -11,6 +12,7 @@ interface UloggerSyncModalProps {
   mode?: 'manual' | 'autosync';
   onStartAutoSync?: (ids: number[]) => void;
   initialSelectedIds?: number[];
+  isAdmin?: boolean;
 }
 
 export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({ 
@@ -19,8 +21,10 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
   onImportComplete,
   mode = 'manual',
   onStartAutoSync,
-  initialSelectedIds = []
+  initialSelectedIds = [],
+  isAdmin = true
 }) => {
+  const { session, logout } = useAuth();
   const [tracks, setTracks] = useState<UloggerTrack[]>([]);
   const [syncedTracks, setSyncedTracks] = useState<Map<number, string>>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -29,17 +33,18 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && session) {
       loadTracks();
     }
-  }, [isOpen]);
+  }, [isOpen, session]);
 
   const loadTracks = async () => {
+    if (!session) return;
     setLoading(true);
     setError(null);
     try {
       const [remoteTracks, localSyncedMap] = await Promise.all([
-        uloggerService.listTracks(),
+        uloggerService.listTracks(session.token),
         databaseService.getSyncedUloggerTracks()
       ]);
       
@@ -48,8 +53,12 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
       
       // If manual mode, start empty. If autosync, use provided IDs.
       setSelectedIds(new Set(mode === 'autosync' ? initialSelectedIds : []));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (err: any) {
+      if (err.status === 401) {
+        logout();
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setLoading(false);
     }
@@ -66,6 +75,7 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
   };
 
   const handleAction = async () => {
+    if (!session) return;
     if (selectedIds.size === 0 && mode === 'manual') return;
     
     if (mode === 'autosync' && onStartAutoSync) {
@@ -78,7 +88,7 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
     setError(null);
     try {
       const idsArray = Array.from(selectedIds);
-      const points = await uloggerService.getPoints(idsArray);
+      const points = await uloggerService.getPoints(session.token, idsArray);
       
       if (points.length > 0) {
         await importService.bulkImportPoints(points);
@@ -93,8 +103,12 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
       
       onImportComplete();
       onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (err: any) {
+      if (err.status === 401) {
+        logout();
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setSyncing(false);
     }
@@ -152,7 +166,12 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
                               onChange={() => toggleTrack(id)}
                             />
                           </td>
-                          <td>{track.name || `Track ${id}`}</td>
+                          <td>
+                            <div style={{ fontWeight: 'bold' }}>{track.name || `Track ${id}`}</div>
+                            {isAdmin && track.username && (
+                              <div style={{ fontSize: '0.7rem', color: '#888' }}>User: {track.username}</div>
+                            )}
+                          </td>
                           <td>
                             {isNew ? (
                               <span style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: '4px', background: 'rgba(0, 229, 255, 0.2)', color: '#00e5ff' }}>New</span>

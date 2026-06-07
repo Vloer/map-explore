@@ -7,6 +7,7 @@ export interface UloggerTrack {
   name: string;
   time: string;
   last_update: string;
+  username?: string;
 }
 
 export interface UloggerPoint {
@@ -15,89 +16,107 @@ export interface UloggerPoint {
   time: string;
 }
 
+export interface UloggerSession {
+  token: string;
+  username: string;
+  role: 'user' | 'admin';
+  expires_at: number;
+}
+
 export class UloggerService {
   private baseUrl: string;
-  private token: string;
+  private authUrl: string;
 
   constructor() {
     this.baseUrl = APP_CONFIG.ULOGGER_CONFIG.BRIDGE_URL;
-    this.token = APP_CONFIG.ULOGGER_CONFIG.TOKEN;
+    this.authUrl = APP_CONFIG.ULOGGER_CONFIG.AUTH_URL;
   }
 
-  async listTracks(): Promise<UloggerTrack[]> {
-    if (!this.baseUrl || !this.token) {
-      throw new Error('Ulogger configuration missing (BRIDGE_URL or TOKEN)');
-    }
-
-    const url = new URL(this.baseUrl);
-    url.searchParams.append('action', 'list');
-
-    const response = await fetch(url.toString(), {
-      headers: {
-        'X-Ulogger-Token': this.token
-      }
+  /**
+   * POST auth.php with credentials.
+   */
+  async login(username: string, password: string): Promise<UloggerSession> {
+    const res = await fetch(this.authUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
     });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch tracks: ${response.statusText}`);
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Login failed');
     }
 
-    return response.json();
+    return data;
   }
 
-  async getPoints(trackIds: number[]): Promise<UloggerPoint[]> {
-    if (!this.baseUrl || !this.token) {
-      throw new Error('Ulogger configuration missing');
-    }
-
+  /**
+   * Generic fetch helper for bridge.php
+   */
+  private async bridgeFetch(token: string, action: string, params: Record<string, string> = {}): Promise<any> {
     const url = new URL(this.baseUrl);
-    url.searchParams.append('action', 'get_points');
-    url.searchParams.append('track_ids', trackIds.join(','));
+    url.searchParams.set('action', action);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-    const response = await fetch(url.toString(), {
-      headers: {
-        'X-Ulogger-Token': this.token
-      }
+    const res = await fetch(url.toString(), {
+      headers: { 'Authorization': `Bearer ${token}` },
     });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch points: ${response.statusText}`);
+
+    if (res.status === 401) {
+      const err = new Error('Session expired') as any;
+      err.status = 401;
+      throw err;
     }
 
-    return response.json();
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
+
+    return res.json();
+  }
+
+  async listTracks(token: string): Promise<UloggerTrack[]> {
+    return this.bridgeFetch(token, 'list');
+  }
+
+  async getPoints(token: string, trackIds: number[]): Promise<UloggerPoint[]> {
+    return this.bridgeFetch(token, 'get_points', { 
+      track_ids: trackIds.join(',') 
+    });
+  }
+
+  async whoami(token: string): Promise<{ username: string, role: string }> {
+    return this.bridgeFetch(token, 'whoami');
   }
 
   /**
    * Syncs tracks that have new data since the last sync.
-   * @param {number[]} targetIds Optional list of track IDs to sync. If omitted, syncs all pending tracks.
+   * @param {string} token The session token.
+   * @param {number[]} targetIds Optional list of track IDs to sync.
    * @returns {Promise<number>} The number of tracks synced.
    */
-  async syncAllPending(targetIds?: number[]): Promise<number> {
-    const remoteTracks = await this.listTracks();
+  async syncAllPending(token: string, targetIds?: number[]): Promise<number> {
+    const remoteTracks = await this.listTracks(token);
     const localSyncedMap = await databaseService.getSyncedUloggerTracks();
-
-    console.log('UloggerService: syncAllPending called with targetIds:', targetIds);
 
     const updateableTracks = remoteTracks.filter(t => {
       const id = Number(t.id);
       
-      // Ensure targetIds are numbers for correct comparison
       if (targetIds && targetIds.length > 0) {
         const isTarget = targetIds.map(Number).includes(id);
         if (!isTarget) return false;
       }
 
       const lastSynced = localSyncedMap.get(id);
-      const needsUpdate = !lastSynced || new Date(t.last_update) > new Date(lastSynced);
-      
-      console.log(`Track ${id}: isTarget=true, needsUpdate=${needsUpdate}`);
-      return needsUpdate;
+      return !lastSynced || new Date(t.last_update) > new Date(lastSynced);
     });
-
-    console.log('UloggerService: updateableTracks found:', updateableTracks.map(t => t.id));
 
     if (updateableTracks.length === 0) return 0;
 
     const idsArray = updateableTracks.map(t => Number(t.id));
-    const points = await this.getPoints(idsArray);
+    const points = await this.getPoints(token, idsArray);
 
     if (points.length > 0) {
       await importService.bulkImportPoints(points);

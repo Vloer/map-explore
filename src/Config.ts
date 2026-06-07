@@ -73,8 +73,8 @@ export const APP_CONFIG = {
 
   // Ulogger settings
   ULOGGER_CONFIG: {
-    BRIDGE_URL: import.meta.env.VITE_ULOGGER_BRIDGE_URL || '',
-    TOKEN: import.meta.env.VITE_ULOGGER_TOKEN || '',
+    BRIDGE_URL: import.meta.env.VITE_ULOGGER_BRIDGE_URL || 'http://62.238.4.160/ulogger_bridge.php',
+    AUTH_URL: import.meta.env.VITE_ULOGGER_AUTH_URL || 'http://62.238.4.160/auth.php',
   },
 
   // Constants

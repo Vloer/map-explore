@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { APP_CONFIG } from '../Config';
+import { useAuth } from '../contexts/AuthContext';
 
 interface ControlsProps {
   fogRadius: number;
@@ -17,12 +18,11 @@ interface ControlsProps {
   toggleGrid: (enabled: boolean) => void;
   autoSyncActive: boolean;
   onToggleAutoSync: () => void;
+  isAdmin: boolean;
 }
 
 /**
  * Bottom control panel for map settings, heatmap toggles, and data management.
- * 
- * @param props Component properties for controlling various map features.
  */
 export function Controls({ 
   fogRadius, 
@@ -39,9 +39,11 @@ export function Controls({
   showGrid,
   toggleGrid,
   autoSyncActive,
-  onToggleAutoSync
+  onToggleAutoSync,
+  isAdmin
 }: ControlsProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { logout } = useAuth();
 
   return (
     <div style={{
@@ -74,20 +76,38 @@ export function Controls({
         <h4 style={{ margin: 0, fontSize: '14px', color: '#888' }}>
           {isCollapsed ? 'Map Settings & Tools' : 'Settings'}
         </h4>
-        <button 
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#2196F3',
-            cursor: 'pointer',
-            fontSize: '12px',
-            fontWeight: 'bold',
-            padding: '5px'
-          }}
-        >
-          {isCollapsed ? 'EXPAND ▲' : 'COLLAPSE ▼'}
-        </button>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {isCollapsed && (
+            <button 
+              onClick={logout}
+              style={{
+                background: 'none',
+                border: '1px solid #444',
+                color: '#888',
+                cursor: 'pointer',
+                fontSize: '10px',
+                padding: '2px 8px',
+                borderRadius: '4px'
+              }}
+            >
+              LOGOUT
+            </button>
+          )}
+          <button 
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#2196F3',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              padding: '5px'
+            }}
+          >
+            {isCollapsed ? 'EXPAND ▲' : 'COLLAPSE ▼'}
+          </button>
+        </div>
       </div>
 
       {!isCollapsed && (
@@ -176,7 +196,7 @@ export function Controls({
                 flex: '1 1 auto'
               }}
             >
-              Sync Ulogger
+              Retrieve location data
             </button>
 
             <button 
@@ -196,48 +216,69 @@ export function Controls({
               {autoSyncActive ? 'Auto-Sync: ON' : 'Auto-Sync: OFF'}
             </button>
 
-            <button 
-              onClick={onUploadClick}
-              disabled={loading}
-              style={{
-                backgroundColor: '#2196F3',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                padding: '8px 16px',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: '600',
-                opacity: loading ? 0.6 : 1,
-                flex: '1 1 auto'
-              }}
-            >
-              {loading ? 'Processing...' : 'Import History'}
-            </button>
+            {isAdmin && (
+              <>
+                <button 
+                  onClick={onUploadClick}
+                  disabled={loading}
+                  style={{
+                    backgroundColor: '#2196F3',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '8px 16px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    opacity: loading ? 0.6 : 1,
+                    flex: '1 1 auto'
+                  }}
+                >
+                  {loading ? 'Processing...' : 'Import History'}
+                </button>
 
-            <button 
-              onClick={onExportDatabase}
-              style={{
-                backgroundColor: 'transparent',
-                color: '#4CAF50',
-                border: '1px solid #4CAF50',
-                borderRadius: '6px',
-                padding: '8px 16px',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: '600',
-                flex: '1 1 auto'
-              }}
-            >
-              Export DB
-            </button>
+                <button 
+                  onClick={onExportDatabase}
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: '#4CAF50',
+                    border: '1px solid #4CAF50',
+                    borderRadius: '6px',
+                    padding: '8px 16px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    flex: '1 1 auto'
+                  }}
+                >
+                  Export DB
+                </button>
 
+                <button 
+                  onClick={onClearDatabase}
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: '#f44336',
+                    border: '1px solid #f44336',
+                    borderRadius: '6px',
+                    padding: '8px 16px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    flex: '1 1 auto'
+                  }}
+                >
+                  Reset Data
+                </button>
+              </>
+            )}
+            
             <button 
-              onClick={onClearDatabase}
+              onClick={logout}
               style={{
-                backgroundColor: 'transparent',
-                color: '#f44336',
-                border: '1px solid #f44336',
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                color: '#aaa',
+                border: '1px solid #444',
                 borderRadius: '6px',
                 padding: '8px 16px',
                 cursor: 'pointer',
@@ -246,7 +287,7 @@ export function Controls({
                 flex: '1 1 auto'
               }}
             >
-              Reset Data
+              Logout
             </button>
           </div>
         </div>
