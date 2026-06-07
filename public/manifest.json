@@ -1,6 +1,6 @@
 {
-  "name": "World Fog of War",
-  "short_name": "FogMap",
+  "name": "World Explorer",
+  "short_name": "WorldExplorer",
   "start_url": "/",
   "display": "fullscreen",
   "orientation": "portrait",

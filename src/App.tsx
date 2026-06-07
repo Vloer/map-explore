@@ -27,7 +27,7 @@ import { LoginScreen } from './components/LoginScreen';
 /**
  * The internal content of the app, gated by authentication.
  */
-function AppContent() {
+function AppContent({ initError }: { initError: string | null }) {
   const { session, logout } = useAuth();
   const { mapContainer, map, isMapReady } = useMap();
 
@@ -56,20 +56,14 @@ function AppContent() {
   const [heatmapStrength, setHeatmapStrength] = useState(APP_CONFIG.HEATMAP_STARTING_SENSITIVITY);
   const [showStreetPanel, setShowStreetPanel] = useState(false);
   const [streetHighlight, setStreetHighlight] = useState<any>(null);
-  const [initError, setInitError] = useState<string | null>(null);
   
   const [uloggerModalOpen, setUloggerModalOpen] = useState(false);
   const [uloggerModalMode, setUloggerModalMode] = useState<'manual' | 'autosync'>('manual');
   const [autoSyncActive, setAutoSyncActive] = useState(false);
   const [autoSyncIds, setAutoSyncIds] = useState<number[]>([]);
 
-  // Initialize database on mount
+  // Local effect for UI state on mount
   useEffect(() => {
-    databaseService.init().catch(err => {
-      console.error("Critical Database Initialization Failure", err);
-      setInitError(err.message || String(err));
-    });
-
     // Check for active auto-sync on mount
     const expiry = localStorage.getItem('ulogger_auto_sync_expiry');
     const savedIds = localStorage.getItem('ulogger_auto_sync_ids');
@@ -381,7 +375,7 @@ function AppContent() {
 /**
  * Auth Gatekeeper
  */
-function Gatekeeper() {
+function Gatekeeper({ initError }: { initError: string | null }) {
   const { session } = useAuth();
 
   if (session === undefined) {
@@ -396,16 +390,26 @@ function Gatekeeper() {
     return <LoginScreen />;
   }
 
-  return <AppContent />;
+  return <AppContent initError={initError} />;
 }
 
 /**
  * Main application component.
  */
 function App() {
+  const [initError, setInitError] = useState<string | null>(null);
+
+  // Initialize database at the very top level so it's ready for login clearing
+  useEffect(() => {
+    databaseService.init().catch(err => {
+      console.error("Critical Database Initialization Failure", err);
+      setInitError(err.message || String(err));
+    });
+  }, []);
+
   return (
     <AuthProvider>
-      <Gatekeeper />
+      <Gatekeeper initError={initError} />
     </AuthProvider>
   );
 }

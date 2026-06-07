@@ -1,5 +1,5 @@
 /**
- * Configuration for World Fog of War
+ * Configuration for World Explorer
  */
 export const APP_CONFIG = {
   // Map settings
