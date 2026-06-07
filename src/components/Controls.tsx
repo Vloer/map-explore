@@ -15,6 +15,8 @@ interface ControlsProps {
   loading: boolean;
   showGrid: boolean;
   toggleGrid: (enabled: boolean) => void;
+  autoSyncActive: boolean;
+  onToggleAutoSync: () => void;
 }
 
 /**
@@ -35,7 +37,9 @@ export function Controls({
   onUloggerClick,
   loading,
   showGrid,
-  toggleGrid
+  toggleGrid,
+  autoSyncActive,
+  onToggleAutoSync
 }: ControlsProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -173,6 +177,23 @@ export function Controls({
               }}
             >
               Sync Ulogger
+            </button>
+
+            <button 
+              onClick={onToggleAutoSync}
+              style={{
+                backgroundColor: autoSyncActive ? '#4CAF50' : '#444',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '8px 16px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: '600',
+                flex: '1 1 auto'
+              }}
+            >
+              {autoSyncActive ? 'Auto-Sync: ON' : 'Auto-Sync: OFF'}
             </button>
 
             <button 

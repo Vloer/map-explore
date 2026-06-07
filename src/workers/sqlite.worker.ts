@@ -204,6 +204,7 @@ const handlers: Record<string, (data: any) => Promise<unknown>> = {
       DELETE FROM streets_meta;
       DELETE FROM streets_data;
       DELETE FROM street_grid_index;
+      DELETE FROM synced_tracks;
       VACUUM;
     `);
     return true;

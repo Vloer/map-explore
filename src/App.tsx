@@ -7,6 +7,7 @@ import { useImport } from './hooks/useImport';
 import { useMapEvents } from './hooks/useMapEvents';
 import { useStreets } from './hooks/useStreets';
 import { databaseService } from './services/DatabaseService';
+import { uloggerService } from './services/UloggerService';
 import { APP_CONFIG } from './Config';
 import { calculateCenter } from './Util';
 import type { Street } from './types';
@@ -55,7 +56,11 @@ function App() {
   const [showStreetPanel, setShowStreetPanel] = useState(false);
   const [streetHighlight, setStreetHighlight] = useState<any>(null);
   const [initError, setInitError] = useState<string | null>(null);
+  
   const [uloggerModalOpen, setUloggerModalOpen] = useState(false);
+  const [uloggerModalMode, setUloggerModalMode] = useState<'manual' | 'autosync'>('manual');
+  const [autoSyncActive, setAutoSyncActive] = useState(false);
+  const [autoSyncIds, setAutoSyncIds] = useState<number[]>([]);
 
   // Initialize database on mount
   useEffect(() => {
@@ -63,7 +68,85 @@ function App() {
       console.error("Critical Database Initialization Failure", err);
       setInitError(err.message || String(err));
     });
+
+    // Check for active auto-sync on mount
+    const expiry = localStorage.getItem('ulogger_auto_sync_expiry');
+    const savedIds = localStorage.getItem('ulogger_auto_sync_ids');
+    
+    if (savedIds) {
+      try {
+        setAutoSyncIds(JSON.parse(savedIds));
+      } catch (e) {
+        console.error("Failed to parse auto-sync IDs", e);
+      }
+    }
+
+    if (expiry && Number(expiry) > Date.now()) {
+      setAutoSyncActive(true);
+    }
   }, []);
+
+  // Auto-sync timer logic
+  useEffect(() => {
+    if (!autoSyncActive) return;
+
+    const interval = setInterval(async () => {
+      // Check if expired
+      const expiry = localStorage.getItem('ulogger_auto_sync_expiry');
+      if (!expiry || Number(expiry) <= Date.now()) {
+        setAutoSyncActive(false);
+        localStorage.removeItem('ulogger_auto_sync_expiry');
+        return;
+      }
+
+      console.log('Auto-Sync: Checking for updates for tracks:', autoSyncIds);
+      try {
+        // IMPORTANT: Must pass autoSyncIds to only sync selected tracks
+        const syncedCount = await uloggerService.syncAllPending(autoSyncIds);
+        if (syncedCount > 0) {
+          console.log(`Auto-Sync: Synced ${syncedCount} tracks.`);
+          onImportComplete();
+        }
+      } catch (err) {
+        console.error('Auto-Sync Error:', err);
+      }
+    }, 60000); // 1 minute
+
+    return () => clearInterval(interval);
+  }, [autoSyncActive, autoSyncIds]);
+
+  const toggleAutoSync = () => {
+    if (autoSyncActive) {
+      setAutoSyncActive(false);
+      localStorage.removeItem('ulogger_auto_sync_expiry');
+    } else {
+      setUloggerModalMode('autosync');
+      setUloggerModalOpen(true);
+    }
+  };
+
+  const startAutoSync = (ids: number[]) => {
+    const numericIds = ids.map(Number);
+    console.log('App: Starting Auto-Sync with IDs:', numericIds);
+    setAutoSyncIds(numericIds);
+    localStorage.setItem('ulogger_auto_sync_ids', JSON.stringify(numericIds));
+    
+    if (numericIds.length > 0) {
+      setAutoSyncActive(true);
+      localStorage.setItem('ulogger_auto_sync_expiry', String(Date.now() + 2 * 60 * 60 * 1000));
+      uloggerService.syncAllPending(numericIds).then(count => {
+        if (count > 0) onImportComplete();
+      });
+    } else {
+      setAutoSyncActive(false);
+      localStorage.removeItem('ulogger_auto_sync_expiry');
+    }
+  };
+
+  const openManualSync = () => {
+    setUloggerModalMode('manual');
+    setUloggerModalOpen(true);
+  };
 
   const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
@@ -232,16 +315,21 @@ function App() {
         onUploadClick={onButtonClick}
         onClearDatabase={clearDatabase}
         onExportDatabase={() => databaseService.exportDatabase()}
-        onUloggerClick={() => setUloggerModalOpen(true)}
+        onUloggerClick={openManualSync}
         loading={loading}
         showGrid={showGrid}
         toggleGrid={toggleGrid}
+        autoSyncActive={autoSyncActive}
+        onToggleAutoSync={toggleAutoSync}
       />
       
       <UloggerSyncModal 
         isOpen={uloggerModalOpen} 
         onClose={() => setUloggerModalOpen(false)} 
         onImportComplete={onImportComplete}
+        mode={uloggerModalMode}
+        onStartAutoSync={startAutoSync}
+        initialSelectedIds={autoSyncIds}
       />
 
       <input type="file" accept=".json,.gpx" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
