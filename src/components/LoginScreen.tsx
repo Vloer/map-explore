@@ -122,7 +122,7 @@ export function LoginScreen() {
         
         <div style={{ textAlign: 'center', marginTop: '25px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
           <a 
-            href="https://github.com/vloer/mapexplorer/blob/master/docs/setup-guide.md" 
+            href="https://github.com/vloer/map-explore/blob/master/docs/setup-guide.md" 
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: '#4CAF50', textDecoration: 'none', fontSize: '14px', fontWeight: 'bold' }}
