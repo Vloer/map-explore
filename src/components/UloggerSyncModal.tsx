@@ -114,6 +114,22 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
     }
   };
 
+  const handleSelectAll = () => {
+    setSelectedIds(new Set(tracks.map(t => Number(t.id))));
+  };
+
+  const handleSelectMine = () => {
+    if (!session) return;
+    const myTrackIds = tracks
+      .filter(t => t.username === session.username)
+      .map(t => Number(t.id));
+    setSelectedIds(new Set(myTrackIds));
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedIds(new Set());
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -136,12 +152,22 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
           ) : error ? (
             <div className="sync-error">{error}</div>
           ) : (
-            <div className="track-list">
-              {tracks.length === 0 ? (
-                <p>No tracks found on server.</p>
-              ) : (
-                <table>
-                  <thead>
+            <>
+              {tracks.length > 0 && (
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                  <button onClick={handleSelectAll} className="secondary-btn" style={{ padding: '4px 8px', fontSize: '12px' }}>Select All</button>
+                  {isAdmin && (
+                    <button onClick={handleSelectMine} className="secondary-btn" style={{ padding: '4px 8px', fontSize: '12px' }}>Select Mine</button>
+                  )}
+                  <button onClick={handleDeselectAll} className="secondary-btn" style={{ padding: '4px 8px', fontSize: '12px' }}>Deselect All</button>
+                </div>
+              )}
+              <div className="track-list">
+                {tracks.length === 0 ? (
+                  <p>No tracks found on server.</p>
+                ) : (
+                  <table>
+                    <thead>
                     <tr>
                       <th>Select</th>
                       <th>Track Name</th>
@@ -189,6 +215,7 @@ export const UloggerSyncModal: React.FC<UloggerSyncModalProps> = ({
                 </table>
               )}
             </div>
+            </>
           )}
         </div>
 

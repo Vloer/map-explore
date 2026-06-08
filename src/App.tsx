@@ -6,6 +6,7 @@ import { useExplorationStats } from './hooks/useExplorationStats';
 import { useImport } from './hooks/useImport';
 import { useMapEvents } from './hooks/useMapEvents';
 import { useStreets } from './hooks/useStreets';
+import { useUserLocation } from './hooks/useUserLocation';
 import { databaseService } from './services/DatabaseService';
 import { uloggerService } from './services/UloggerService';
 import { APP_CONFIG } from './Config';
@@ -151,6 +152,7 @@ function AppContent({ initError }: { initError: string | null }) {
   const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady);
   const { streets, isLoading: isLoadingStreets, geoService, refreshVisited } = useStreets(regionStats);
+  const { isTracking, centerOnUser } = useUserLocation(map, isMapReady);
 
   const { visitedStreetsCount, totalStreetsCount } = useMemo(() => {
     const total = streets.length;
@@ -175,9 +177,26 @@ function AppContent({ initError }: { initError: string | null }) {
     setHighlight(features.length > 0 ? { type: 'FeatureCollection', features } : null);
   }, [regionStats, streetHighlight, setHighlight]);
 
-  const onImportComplete = () => {
+  const onImportComplete = async () => {
     refreshLayers();
     refreshStats();
+
+    // Auto-center map on dense data area after import
+    if (map.current) {
+      try {
+        const denseCenter = await databaseService.getDenseAreaCenter();
+        if (denseCenter) {
+          map.current.flyTo({
+            center: [denseCenter.lng, denseCenter.lat],
+            zoom: 13,
+            essential: true,
+            duration: 2000
+          });
+        }
+      } catch (err) {
+        console.error("Failed to auto-center map:", err);
+      }
+    }
   };
 
   const handleStreetClick = (street: Street) => {
@@ -254,6 +273,14 @@ function AppContent({ initError }: { initError: string | null }) {
   return (
     <div className="app-container">
       <div id="map" ref={mapContainer} />
+
+      <button 
+        className={`my-location-btn ${isTracking ? 'active' : ''}`}
+        onClick={centerOnUser}
+        title={isTracking ? "Center on my location" : "Show my location"}
+      >
+        🎯
+      </button>
 
       <div className="top-left-panel">
         <div style={{ 

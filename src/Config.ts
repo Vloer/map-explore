@@ -3,8 +3,8 @@
  */
 export const APP_CONFIG = {
   // Map settings
-  MAP_INITIAL_CENTER: [5.2561, 51.3697] as [number, number],
-  MAP_INITIAL_ZOOM: 14,
+  MAP_INITIAL_CENTER: [4.9041, 52.3676] as [number, number], // Amsterdam
+  MAP_INITIAL_ZOOM: 12,
   MAP_MAX_ZOOM: 19,
   MAP_STYLE: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
 

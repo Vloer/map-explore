@@ -193,8 +193,27 @@ export class DatabaseService {
   }
 
   /**
-   * Retrieves points in bounds.
+   * Finds the center of the most data-dense grid area in the database.
+   * Useful for auto-centering the map after importing new data.
    */
+  async getDenseAreaCenter(): Promise<{ lat: number, lng: number } | null> {
+    // Find the grid cell with the highest visit count
+    const rows = await this.send('query', {
+      sql: `
+        SELECT lat_e7, lng_e7 
+        FROM locations 
+        ORDER BY visit_count DESC 
+        LIMIT 1
+      `
+    }) as { lat_e7: number, lng_e7: number }[];
+
+    if (rows.length === 0) return null;
+
+    return {
+      lat: rows[0].lat_e7 / 1e7,
+      lng: rows[0].lng_e7 / 1e7
+    };
+  }
   async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number, minDetailMeters: number = 0): Promise<{lat: number, lng: number, visits: number}[]> {
     const minLatE7 = Math.round(minLat * 1e7);
     const maxLatE7 = Math.round(maxLat * 1e7);
