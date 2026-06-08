@@ -28,9 +28,10 @@ dist-ssr
 *.sln
 *.sw?
 
-#tst
+#custom
 src/test/
 GEMINI.md
 skills-lock.json
-docs/
+docs/server-config.md
 server/
+apk/

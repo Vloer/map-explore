@@ -120,9 +120,25 @@ export function LoginScreen() {
           </button>
         </form>
         
-        <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '12px', color: '#666' }}>
-          Contact the administrator if you need an account.
-        </p>
+        <div style={{ textAlign: 'center', marginTop: '25px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+          <a 
+            href="https://github.com/vloer/mapexplorer/blob/master/docs/setup-guide.md" 
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: '#4CAF50', textDecoration: 'none', fontSize: '14px', fontWeight: 'bold' }}
+          >
+            📖 Read the Setup Guide
+          </a>
+          <a 
+            href="http://62.238.4.160/register.php" 
+            style={{ color: '#2196F3', textDecoration: 'none', fontSize: '14px', fontWeight: 'bold' }}
+          >
+            Don't have an account? Register here
+          </a>
+          <p style={{ fontSize: '12px', color: '#666', margin: 0 }}>
+            Contact the administrator if you need an invite code.
+          </p>
+        </div>
       </div>
     </div>
   );
