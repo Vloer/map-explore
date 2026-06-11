@@ -1,0 +1,184 @@
+.controls-panel {
+  position: absolute;
+  bottom: 10px;
+  left: calc(10px + env(safe-area-inset-left, 0px));
+  right: calc(10px + env(safe-area-inset-right, 0px));
+  background-color: rgba(26, 26, 26, 0.95);
+  border-radius: 12px;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  border: 1px solid #333;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  transition: all 0.3s ease-in-out;
+  overflow-y: auto;
+  margin-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.controls-panel.collapsed {
+  padding: 10px 20px;
+  gap: 0;
+  max-height: 50px;
+}
+
+.controls-panel.expanded {
+  padding: 15px 20px;
+  gap: 15px;
+  max-height: 85vh;
+}
+
+.controls-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.controls-header.expanded {
+  padding-bottom: 10px;
+}
+
+.controls-header h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #888;
+}
+
+.controls-header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.controls-btn-sm {
+  background: none;
+  border: 1px solid #444;
+  color: #888;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.controls-btn-toggle {
+  background: none;
+  border: none;
+  color: #2196F3;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: bold;
+  padding: 5px;
+}
+
+.controls-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 30px;
+}
+
+.controls-slider-group {
+  flex: 1 1 200px;
+}
+
+.controls-slider-header {
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.controls-slider-val-blue {
+  color: #2196F3;
+  font-weight: bold;
+}
+
+.controls-slider-val-orange {
+  color: #FF5722;
+  font-weight: bold;
+}
+
+.controls-slider-val-yellow {
+  color: #FFEB3B;
+  font-weight: bold;
+}
+
+.controls-slider-header-sm {
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.controls-actions-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.controls-btn {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s;
+  flex: 1 1 auto;
+}
+
+.controls-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-heatmap-on { background-color: #FF5722; color: white; }
+.btn-heatmap-off { background-color: #444; color: white; }
+
+.btn-grid-on { background-color: #9C27B0; color: white; }
+.btn-grid-off { background-color: #444; color: white; }
+
+.btn-cyan { background-color: #00e5ff; color: #000; }
+
+.btn-sync-on { background-color: #4CAF50; color: white; }
+.btn-sync-off { background-color: #444; color: white; }
+
+.btn-blue { background-color: #2196F3; color: white; }
+
+.btn-outline-green {
+  background-color: transparent;
+  color: #4CAF50;
+  border: 1px solid #4CAF50;
+}
+
+.btn-outline-red {
+  background-color: transparent;
+  color: #f44336;
+  border: 1px solid #f44336;
+}
+
+.btn-solid-red {
+  background-color: #f44336;
+  color: white;
+  border: 1px solid #f44336;
+}
+
+.btn-outline-gray {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #aaa;
+  border: 1px solid #444;
+}
+
+.controls-filters-group {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 10px 0;
+  border-top: 1px solid #333;
+  border-bottom: 1px solid #333;
+  margin-top: 10px;
+}

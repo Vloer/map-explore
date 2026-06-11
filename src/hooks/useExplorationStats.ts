@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import * as turf from "@turf/turf";
 import { databaseService } from "../services/DatabaseService";
 import type { RegionStats } from "../types";
@@ -149,5 +149,11 @@ export function useExplorationStats(
     }
   };
 
-  return { explorationPercentage, setExplorationPercentage, refreshStats: () => regionStats && calculatePercentage(regionStats) };
+  const refreshStats = useCallback(() => {
+    if (regionStats) {
+      calculatePercentage(regionStats);
+    }
+  }, [regionStats]);
+
+  return { explorationPercentage, setExplorationPercentage, refreshStats };
 }

@@ -75,7 +75,7 @@ export interface DetailedLocationPoint {
 export interface RegionStats {
   name: string;
   type: string;
-  geojson: any;
+  geojson: import('geojson').Polygon | import('geojson').MultiPolygon;
   bounds: [number, number, number, number]; // [minLat, maxLat, minLng, maxLng]
   osmId?: number;
   osmType?: string;

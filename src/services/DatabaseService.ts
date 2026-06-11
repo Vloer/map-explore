@@ -229,11 +229,11 @@ export class DatabaseService {
     // Only apply filter if it's not the "show all" default (0 to 200)
     // This allows existing data with NULL speed to be shown.
     if (minSpeed !== undefined && minSpeed >= 0 && minSpeed != null) {
-      speedClause += ' AND latest_speed >= ?';
+      speedClause += ' AND max_speed >= ?';
       bind.push(minSpeed);
     }
     if (maxSpeed !== undefined && maxSpeed <= 200 && maxSpeed != null) {
-      speedClause += ' AND latest_speed <= ?';
+      speedClause += ' AND min_speed <= ?';
       bind.push(maxSpeed);
     }
     

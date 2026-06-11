@@ -19,7 +19,7 @@ async function init(config?: { gridMeters: number }) {
       db = new sqlite3.oo1.OpfsDb('/world_fog_of_war.db');
       log('OPFS database opened successfully.');
     } else {
-      db = new sqlite3.oo1.DB('/world_fog_of_war.db', 'ct');
+      db = new sqlite3.oo1.DB('/world_fog_of_war.db', 'c');
       log('OPFS not available, using fallback storage.');
     }
 
@@ -113,21 +113,6 @@ async function init(config?: { gridMeters: number }) {
       END;
     `);
 
-    // Enable expanded SQL tracing
-    sqlite3.capi.sqlite3_trace_v2(
-      db.pointer,
-      sqlite3.capi.SQLITE_TRACE_STMT,
-      (_type: number, _context: any, stmtPtr: number) => {
-        const expanded = sqlite3.capi.sqlite3_expanded_sql(stmtPtr);
-        if (expanded) {
-          if (expanded.includes('INSERT') && Math.random() > 0.05) return 0;
-          console.log(`[SQL TRACE] ${expanded}`);
-        }
-        return 0;
-      },
-      null
-    );
-    
     // Add speed column to existing databases seamlessly
     try {
       db.exec('ALTER TABLE signals ADD COLUMN speed REAL;');
@@ -139,6 +124,14 @@ async function init(config?: { gridMeters: number }) {
       db.exec('ALTER TABLE locations ADD COLUMN latest_speed REAL;');
     } catch (e) {
       // Column already exists or table is new, safe to ignore
+    }
+
+    try {
+      db.exec('ALTER TABLE locations ADD COLUMN min_speed REAL;');
+      db.exec('ALTER TABLE locations ADD COLUMN max_speed REAL;');
+      db.exec('UPDATE locations SET min_speed = latest_speed, max_speed = latest_speed WHERE latest_speed IS NOT NULL;');
+    } catch (e) {
+      // Columns already exist
     }
 
     log(`Tables initialized (Grid: ${gridSizeMeters}m) and tracing enabled.`);

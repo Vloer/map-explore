@@ -229,16 +229,16 @@ export function useLayers(map: React.MutableRefObject<maplibregl.Map | null>, is
   /**
    * Refreshes the data in both the fog and heatmap layers.
    */
-  const refreshLayers = () => {
+  const refreshLayers = useCallback(() => {
     fogLayer.current?.refreshData();
     heatmapLayer.current?.refreshData();
-  };
+  }, []);
 
   /**
    * Updates the reveal radius for both fog and heatmap layers.
    * @param {number} radius The new radius in meters.
    */
-  const updateFogRadius = (radius: number) => {
+  const updateFogRadius = useCallback((radius: number) => {
     if (fogLayer.current) {
       fogLayer.current.meterRadius = radius;
       fogLayer.current.draw();
@@ -247,25 +247,25 @@ export function useLayers(map: React.MutableRefObject<maplibregl.Map | null>, is
       heatmapLayer.current.meterRadius = radius;
       heatmapLayer.current.draw();
     }
-  };
+  }, []);
 
   /**
    * Updates the heatmap strength (max visits).
    * @param {number} strength The new maximum visits value.
    */
-  const updateHeatmapStrength = (strength: number) => {
+  const updateHeatmapStrength = useCallback((strength: number) => {
     if (heatmapLayer.current) {
       heatmapLayer.current.maxVisits = strength;
       heatmapLayer.current.draw();
     }
-  };
+  }, []);
 
   /**
    * Updates the speed filter for both layers.
    * @param {number | undefined} min Minimum speed in km/h.
    * @param {number | undefined} max Maximum speed in km/h.
    */
-  const updateSpeedFilter = (min: number | undefined, max: number | undefined) => {
+  const updateSpeedFilter = useCallback((min: number | undefined, max: number | undefined) => {
     if (fogLayer.current) {
       fogLayer.current.minSpeed = min;
       fogLayer.current.maxSpeed = max;
@@ -275,23 +275,23 @@ export function useLayers(map: React.MutableRefObject<maplibregl.Map | null>, is
       heatmapLayer.current.maxSpeed = max;
     }
     refreshLayers();
-  };
+  }, [refreshLayers]);
 
   /**
    * Toggles the visibility of the heatmap layer.
    * @param {boolean} enabled Whether the heatmap should be enabled.
    */
-  const toggleHeatmap = (enabled: boolean) => {
+  const toggleHeatmap = useCallback((enabled: boolean) => {
     heatmapLayer.current?.setEnabled(enabled);
-  };
+  }, []);
 
   /**
    * Sets the GeoJSON feature(s) to be highlighted on the map.
    * @param {any} geojson GeoJSON feature or collection.
    */
-  const setHighlight = (geojson: any) => {
+  const setHighlight = useCallback((geojson: any) => {
     fogLayer.current?.setHighlight(geojson);
-  };
+  }, []);
 
   return { 
     fogLayer, 

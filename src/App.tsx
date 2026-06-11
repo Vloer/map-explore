@@ -7,8 +7,9 @@ import { useImport } from './hooks/useImport';
 import { useMapEvents } from './hooks/useMapEvents';
 import { useStreets } from './hooks/useStreets';
 import { useUserLocation } from './hooks/useUserLocation';
+import { useMapSettings } from './hooks/useMapSettings';
+import { useAutoSync } from './hooks/useAutoSync';
 import { databaseService } from './services/DatabaseService';
-import { uloggerService } from './services/UloggerService';
 import { APP_CONFIG } from './Config';
 import { calculateCenter } from './Util';
 import type { Street } from './types';
@@ -43,21 +44,18 @@ function AppContent({ initError }: { initError: string | null }) {
     updateSpeedFilter: updateSpeedFilterLayer
   } = useLayers(map, isMapReady);
 
-  const updateFogRadius = useCallback((radius: number) => {
-    updateFogRadiusLayer(radius);
-  }, [updateFogRadiusLayer]);
-
-  const updateHeatmapStrength = useCallback((strength: number) => {
-    updateHeatmapStrengthLayer(strength);
-  }, [updateHeatmapStrengthLayer]);
-
-  const toggleHeatmapLayer = useCallback((enabled: boolean) => {
-    toggleHeatmapLayerRaw(enabled);
-  }, [toggleHeatmapLayerRaw]);
-
-  const updateSpeedFilter = useCallback((min: number, max: number) => {
-    updateSpeedFilterLayer(min, max);
-  }, [updateSpeedFilterLayer]);
+  const {
+    fogRadius,
+    heatmapEnabled,
+    heatmapStrength,
+    minSpeed,
+    maxSpeed,
+    handleRadiusChange,
+    handleHeatmapStrengthChange,
+    onToggleHeatmap,
+    handleMinSpeedChange,
+    handleMaxSpeedChange
+  } = useMapSettings(updateFogRadiusLayer, updateHeatmapStrengthLayer, toggleHeatmapLayerRaw, updateSpeedFilterLayer);
   
   const { 
     searchQuery, 
@@ -69,40 +67,8 @@ function AppContent({ initError }: { initError: string | null }) {
     reverseGeocode
   } = useLocationSearch(map);
 
-  const [fogRadius, setFogRadius] = useState(() => {
-    return parseInt(localStorage.getItem('fog_radius') || String(APP_CONFIG.BASE_FOG_REVEAL_RADIUS));
-  });
-  const [heatmapEnabled, setHeatmapEnabled] = useState(() => {
-    return localStorage.getItem('heatmap_enabled') === 'true';
-  });
-  const [heatmapStrength, setHeatmapStrength] = useState(() => {
-    return parseInt(localStorage.getItem('heatmap_strength') || String(APP_CONFIG.HEATMAP_STARTING_SENSITIVITY));
-  });
   const [showStreetPanel, setShowStreetPanel] = useState(false);
   const [streetHighlight, setStreetHighlight] = useState<any>(null);
-  
-  const [minSpeed, setMinSpeed] = useState(() => {
-    const val = localStorage.getItem('min_speed_filter');
-    return val !== null ? parseInt(val) : 0;
-  });
-  const [maxSpeed, setMaxSpeed] = useState(() => {
-    const val = localStorage.getItem('max_speed_filter');
-    return val !== null ? parseInt(val) : 200;
-  });
-
-  const handleMinSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value);
-    setMinSpeed(val);
-    updateSpeedFilter(val, maxSpeed);
-    localStorage.setItem('min_speed_filter', String(val));
-  };
-
-  const handleMaxSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value);
-    setMaxSpeed(val);
-    updateSpeedFilter(minSpeed, val);
-    localStorage.setItem('max_speed_filter', String(val));
-  };
   
   const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
   const { tooltip } = useMapEvents(map, isMapReady, minSpeed, maxSpeed);
@@ -133,90 +99,15 @@ function AppContent({ initError }: { initError: string | null }) {
 
   const [uloggerModalOpen, setUloggerModalOpen] = useState(false);
   const [uloggerModalMode, setUloggerModalMode] = useState<'manual' | 'autosync'>('manual');
-  const [autoSyncActive, setAutoSyncActive] = useState(false);
-  const [autoSyncIds, setAutoSyncIds] = useState<number[]>([]);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  // Local effect for UI state on mount
-  useEffect(() => {
-    // Check for active auto-sync on mount
-    const expiry = localStorage.getItem('ulogger_auto_sync_expiry');
-    const savedIds = localStorage.getItem('ulogger_auto_sync_ids');
-    
-    if (savedIds) {
-      try {
-        setAutoSyncIds(JSON.parse(savedIds));
-      } catch (e) {
-        console.error("Failed to parse auto-sync IDs", e);
-      }
-    }
-
-    if (expiry && Number(expiry) > Date.now()) {
-      setAutoSyncActive(true);
-    }
-  }, []);
-
-  // Auto-sync timer logic
-  useEffect(() => {
-    if (!autoSyncActive || !session) return;
-
-    const interval = setInterval(async () => {
-      // Check if expired
-      const expiry = localStorage.getItem('ulogger_auto_sync_expiry');
-      if (!expiry || Number(expiry) <= Date.now()) {
-        setAutoSyncActive(false);
-        localStorage.removeItem('ulogger_auto_sync_expiry');
-        return;
-      }
-
-      console.log('Auto-Sync: Checking for updates for tracks:', autoSyncIds);
-      try {
-        const syncedCount = await uloggerService.syncAllPending(session.token, autoSyncIds);
-        if (syncedCount > 0) {
-          console.log(`Auto-Sync: Synced ${syncedCount} tracks.`);
-          onImportComplete();
-        }
-      } catch (err: any) {
-        console.error('Auto-Sync Error:', err);
-        if (err.status === 401) {
-          logout();
-        }
-      }
-    }, 60000); // 1 minute
-
-    return () => clearInterval(interval);
-  }, [autoSyncActive, autoSyncIds, session, logout, onImportComplete]);
-
-  const toggleAutoSync = () => {
-    if (autoSyncActive) {
-      setAutoSyncActive(false);
-      localStorage.removeItem('ulogger_auto_sync_expiry');
-    } else {
-      setUloggerModalMode('autosync');
-      setUloggerModalOpen(true);
-    }
-  };
-
-  const startAutoSync = (ids: number[]) => {
-    const numericIds = ids.map(Number);
-    setAutoSyncIds(numericIds);
-    localStorage.setItem('ulogger_auto_sync_ids', JSON.stringify(numericIds));
-    
-    if (numericIds.length > 0 && session) {
-      setAutoSyncActive(true);
-      localStorage.setItem('ulogger_auto_sync_expiry', String(Date.now() + 2 * 60 * 60 * 1000));
-      uloggerService.syncAllPending(session.token, numericIds)
-        .then(count => {
-          if (count > 0) onImportComplete();
-        })
-        .catch(err => {
-          if (err.status === 401) logout();
-        });
-    } else {
-      setAutoSyncActive(false);
-      localStorage.removeItem('ulogger_auto_sync_expiry');
-    }
-  };
+  const { autoSyncActive, autoSyncIds, toggleAutoSync, startAutoSync } = useAutoSync(
+    session,
+    logout,
+    onImportComplete,
+    setUloggerModalMode,
+    setUloggerModalOpen
+  );
 
   const openManualSync = () => {
     setUloggerModalMode('manual');
@@ -276,49 +167,24 @@ function AppContent({ initError }: { initError: string | null }) {
     return () => { currentMap.off('click', onClick); };
   }, [isMapReady, map, reverseGeocode]);
 
-  const handleRadiusChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value);
-    setFogRadius(val);
-    updateFogRadius(val);
-    localStorage.setItem('fog_radius', String(val));
-  };
-
-  const handleHeatmapStrengthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value);
-    setHeatmapStrength(val);
-    updateHeatmapStrength(val);
-    localStorage.setItem('heatmap_strength', String(val));
-  };
-
-  const onToggleHeatmap = () => {
-    const next = !heatmapEnabled;
-    setHeatmapEnabled(next);
-    toggleHeatmapLayer(next);
-    localStorage.setItem('heatmap_enabled', String(next));
-  };
-
   // Effect to apply persisted settings to layers on mount/ready
   useEffect(() => {
     if (isMapReady) {
-      updateFogRadius(fogRadius);
-      updateHeatmapStrength(heatmapStrength);
-      toggleHeatmapLayer(heatmapEnabled);
-      updateSpeedFilter(minSpeed, maxSpeed);
+      updateFogRadiusLayer(fogRadius);
+      updateHeatmapStrengthLayer(heatmapStrength);
+      toggleHeatmapLayerRaw(heatmapEnabled);
+      updateSpeedFilterLayer(minSpeed, maxSpeed);
     }
-  }, [isMapReady, fogRadius, heatmapStrength, heatmapEnabled, minSpeed, maxSpeed, updateFogRadius, updateHeatmapStrength, toggleHeatmapLayer, updateSpeedFilter]);
+  }, [isMapReady, fogRadius, heatmapStrength, heatmapEnabled, minSpeed, maxSpeed, updateFogRadiusLayer, updateHeatmapStrengthLayer, toggleHeatmapLayerRaw, updateSpeedFilterLayer]);
 
   const clearDatabase = async () => {
-    console.log('[DEBUG] clearDatabase called. confirmClear:', confirmClear);
-    
     if (!confirmClear) {
-      console.log('[DEBUG] First click: setting confirm state');
       setConfirmClear(true);
       // Automatically reset confirmation after 4 seconds of inactivity
       setTimeout(() => setConfirmClear(false), 4000);
       return;
     }
 
-    console.log('[DEBUG] Second click: confirmed. Clearing...');
     try {
       setConfirmClear(false);
       await databaseService.clearDatabase();
@@ -326,7 +192,7 @@ function AppContent({ initError }: { initError: string | null }) {
       setRegionStats(null);
       alert("Database cleared.");
     } catch (err) {
-      console.error("[DEBUG] Clear database failed:", err);
+      console.error("Clear database failed:", err);
     }
   };
 
