@@ -10,7 +10,6 @@ import { useUserLocation } from './hooks/useUserLocation';
 import { useMapSettings } from './hooks/useMapSettings';
 import { useAutoSync } from './hooks/useAutoSync';
 import { databaseService } from './services/DatabaseService';
-import { APP_CONFIG } from './Config';
 import { calculateCenter } from './Util';
 import type { Street } from './types';
 import './App.css';

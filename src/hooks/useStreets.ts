@@ -53,13 +53,8 @@ export function useStreets(region?: RegionStats | null) {
       let polygon: number[][] = [];
       const geojson = regionToLoad.geojson;
       
-      if (geojson.geometry) {
-        if (geojson.geometry.type === 'Polygon') {
-          polygon = geojson.geometry.coordinates[0];
-        } else if (geojson.geometry.type === 'MultiPolygon') {
-          polygon = geojson.geometry.coordinates[0][0];
-        }
-      } else if (geojson.type === 'Polygon') {
+      // geojson is now strongly typed as Polygon | MultiPolygon
+      if (geojson.type === 'Polygon') {
         polygon = geojson.coordinates[0];
       } else if (geojson.type === 'MultiPolygon') {
         polygon = geojson.coordinates[0][0];

@@ -77,7 +77,7 @@ export function useExplorationStats(
       // The mask option ensures points are only generated inside the polygon.
       const grid = turf.pointGrid(bbox, 10, {
         units: "meters",
-        mask: villagePolygon,
+        mask: turf.feature(villagePolygon),
       });
       const pointsInVillage = grid.features;
 
