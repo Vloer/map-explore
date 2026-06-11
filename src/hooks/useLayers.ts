@@ -16,7 +16,14 @@ import { APP_CONFIG } from '../Config';
 export function useLayers(map: React.MutableRefObject<maplibregl.Map | null>, isMapReady: boolean) {
   const fogLayer = useRef<FogLayer | null>(null);
   const heatmapLayer = useRef<HeatmapLayer | null>(null);
-  const [showGrid, setShowGrid] = useState(false);
+  const [showGrid, setShowGrid] = useState(() => {
+    return localStorage.getItem('show_debug_grid') === 'true';
+  });
+
+  const toggleGrid = useCallback((enabled: boolean) => {
+    setShowGrid(enabled);
+    localStorage.setItem('show_debug_grid', String(enabled));
+  }, []);
 
   useEffect(() => {
     if (!isMapReady || !map.current) return;
@@ -254,6 +261,23 @@ export function useLayers(map: React.MutableRefObject<maplibregl.Map | null>, is
   };
 
   /**
+   * Updates the speed filter for both layers.
+   * @param {number | undefined} min Minimum speed in km/h.
+   * @param {number | undefined} max Maximum speed in km/h.
+   */
+  const updateSpeedFilter = (min: number | undefined, max: number | undefined) => {
+    if (fogLayer.current) {
+      fogLayer.current.minSpeed = min;
+      fogLayer.current.maxSpeed = max;
+    }
+    if (heatmapLayer.current) {
+      heatmapLayer.current.minSpeed = min;
+      heatmapLayer.current.maxSpeed = max;
+    }
+    refreshLayers();
+  };
+
+  /**
    * Toggles the visibility of the heatmap layer.
    * @param {boolean} enabled Whether the heatmap should be enabled.
    */
@@ -278,7 +302,8 @@ export function useLayers(map: React.MutableRefObject<maplibregl.Map | null>, is
     toggleHeatmap,
     setHighlight,
     showGrid,
-    toggleGrid: (enabled: boolean) => setShowGrid(enabled)
+    toggleGrid,
+    updateSpeedFilter
   };
 }
 

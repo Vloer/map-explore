@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useMap } from './hooks/useMap';
 import { useLayers } from './hooks/useLayers';
 import { useLocationSearch } from './hooks/useLocationSearch';
@@ -34,13 +34,30 @@ function AppContent({ initError }: { initError: string | null }) {
 
   const { 
     refreshLayers, 
-    updateFogRadius, 
-    updateHeatmapStrength, 
-    toggleHeatmap: toggleHeatmapLayer,
+    updateFogRadius: updateFogRadiusLayer, 
+    updateHeatmapStrength: updateHeatmapStrengthLayer, 
+    toggleHeatmap: toggleHeatmapLayerRaw,
     setHighlight,
     showGrid,
-    toggleGrid
+    toggleGrid,
+    updateSpeedFilter: updateSpeedFilterLayer
   } = useLayers(map, isMapReady);
+
+  const updateFogRadius = useCallback((radius: number) => {
+    updateFogRadiusLayer(radius);
+  }, [updateFogRadiusLayer]);
+
+  const updateHeatmapStrength = useCallback((strength: number) => {
+    updateHeatmapStrengthLayer(strength);
+  }, [updateHeatmapStrengthLayer]);
+
+  const toggleHeatmapLayer = useCallback((enabled: boolean) => {
+    toggleHeatmapLayerRaw(enabled);
+  }, [toggleHeatmapLayerRaw]);
+
+  const updateSpeedFilter = useCallback((min: number, max: number) => {
+    updateSpeedFilterLayer(min, max);
+  }, [updateSpeedFilterLayer]);
   
   const { 
     searchQuery, 
@@ -52,16 +69,73 @@ function AppContent({ initError }: { initError: string | null }) {
     reverseGeocode
   } = useLocationSearch(map);
 
-  const [fogRadius, setFogRadius] = useState(APP_CONFIG.BASE_FOG_REVEAL_RADIUS);
-  const [heatmapEnabled, setHeatmapEnabled] = useState(false);
-  const [heatmapStrength, setHeatmapStrength] = useState(APP_CONFIG.HEATMAP_STARTING_SENSITIVITY);
+  const [fogRadius, setFogRadius] = useState(() => {
+    return parseInt(localStorage.getItem('fog_radius') || String(APP_CONFIG.BASE_FOG_REVEAL_RADIUS));
+  });
+  const [heatmapEnabled, setHeatmapEnabled] = useState(() => {
+    return localStorage.getItem('heatmap_enabled') === 'true';
+  });
+  const [heatmapStrength, setHeatmapStrength] = useState(() => {
+    return parseInt(localStorage.getItem('heatmap_strength') || String(APP_CONFIG.HEATMAP_STARTING_SENSITIVITY));
+  });
   const [showStreetPanel, setShowStreetPanel] = useState(false);
   const [streetHighlight, setStreetHighlight] = useState<any>(null);
   
+  const [minSpeed, setMinSpeed] = useState(() => {
+    const val = localStorage.getItem('min_speed_filter');
+    return val !== null ? parseInt(val) : 0;
+  });
+  const [maxSpeed, setMaxSpeed] = useState(() => {
+    const val = localStorage.getItem('max_speed_filter');
+    return val !== null ? parseInt(val) : 200;
+  });
+
+  const handleMinSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value);
+    setMinSpeed(val);
+    updateSpeedFilter(val, maxSpeed);
+    localStorage.setItem('min_speed_filter', String(val));
+  };
+
+  const handleMaxSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value);
+    setMaxSpeed(val);
+    updateSpeedFilter(minSpeed, val);
+    localStorage.setItem('max_speed_filter', String(val));
+  };
+  
+  const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
+  const { tooltip } = useMapEvents(map, isMapReady, minSpeed, maxSpeed);
+  const { streets, isLoading: isLoadingStreets, geoService, refreshVisited } = useStreets(regionStats);
+  const { isTracking, centerOnUser } = useUserLocation(map, isMapReady);
+
+  const onImportComplete = useCallback(async () => {
+    refreshLayers();
+    refreshStats();
+
+    // Auto-center map on dense data area after import
+    if (map.current) {
+      try {
+        const denseCenter = await databaseService.getDenseAreaCenter();
+        if (denseCenter) {
+          map.current.flyTo({
+            center: [denseCenter.lng, denseCenter.lat],
+            zoom: 13,
+            essential: true,
+            duration: 2000
+          });
+        }
+      } catch (err) {
+        console.error("Failed to auto-center map:", err);
+      }
+    }
+  }, [refreshLayers, refreshStats, map]);
+
   const [uloggerModalOpen, setUloggerModalOpen] = useState(false);
   const [uloggerModalMode, setUloggerModalMode] = useState<'manual' | 'autosync'>('manual');
   const [autoSyncActive, setAutoSyncActive] = useState(false);
   const [autoSyncIds, setAutoSyncIds] = useState<number[]>([]);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   // Local effect for UI state on mount
   useEffect(() => {
@@ -111,7 +185,7 @@ function AppContent({ initError }: { initError: string | null }) {
     }, 60000); // 1 minute
 
     return () => clearInterval(interval);
-  }, [autoSyncActive, autoSyncIds, session, logout]);
+  }, [autoSyncActive, autoSyncIds, session, logout, onImportComplete]);
 
   const toggleAutoSync = () => {
     if (autoSyncActive) {
@@ -149,11 +223,6 @@ function AppContent({ initError }: { initError: string | null }) {
     setUloggerModalOpen(true);
   };
 
-  const { explorationPercentage, refreshStats } = useExplorationStats(regionStats, fogRadius);
-  const { tooltip } = useMapEvents(map, isMapReady);
-  const { streets, isLoading: isLoadingStreets, geoService, refreshVisited } = useStreets(regionStats);
-  const { isTracking, centerOnUser } = useUserLocation(map, isMapReady);
-
   const { visitedStreetsCount, totalStreetsCount } = useMemo(() => {
     const total = streets.length;
     const visited = streets.filter(s => s.visited).length;
@@ -176,28 +245,6 @@ function AppContent({ initError }: { initError: string | null }) {
     
     setHighlight(features.length > 0 ? { type: 'FeatureCollection', features } : null);
   }, [regionStats, streetHighlight, setHighlight]);
-
-  const onImportComplete = async () => {
-    refreshLayers();
-    refreshStats();
-
-    // Auto-center map on dense data area after import
-    if (map.current) {
-      try {
-        const denseCenter = await databaseService.getDenseAreaCenter();
-        if (denseCenter) {
-          map.current.flyTo({
-            center: [denseCenter.lng, denseCenter.lat],
-            zoom: 13,
-            essential: true,
-            duration: 2000
-          });
-        }
-      } catch (err) {
-        console.error("Failed to auto-center map:", err);
-      }
-    }
-  };
 
   const handleStreetClick = (street: Street) => {
     if (!map.current || !street.coordinates || street.coordinates.length === 0) return;
@@ -223,38 +270,63 @@ function AppContent({ initError }: { initError: string | null }) {
 
   useEffect(() => {
     if (!isMapReady || !map.current) return;
+    const currentMap = map.current;
     const onClick = (e: any) => reverseGeocode(e.lngLat.lat, e.lngLat.lng);
-    map.current.on('click', onClick);
-    return () => { map.current?.off('click', onClick); };
+    currentMap.on('click', onClick);
+    return () => { currentMap.off('click', onClick); };
   }, [isMapReady, map, reverseGeocode]);
 
   const handleRadiusChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value);
     setFogRadius(val);
     updateFogRadius(val);
+    localStorage.setItem('fog_radius', String(val));
   };
 
   const handleHeatmapStrengthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value);
     setHeatmapStrength(val);
     updateHeatmapStrength(val);
+    localStorage.setItem('heatmap_strength', String(val));
   };
 
   const onToggleHeatmap = () => {
     const next = !heatmapEnabled;
     setHeatmapEnabled(next);
     toggleHeatmapLayer(next);
+    localStorage.setItem('heatmap_enabled', String(next));
   };
 
+  // Effect to apply persisted settings to layers on mount/ready
+  useEffect(() => {
+    if (isMapReady) {
+      updateFogRadius(fogRadius);
+      updateHeatmapStrength(heatmapStrength);
+      toggleHeatmapLayer(heatmapEnabled);
+      updateSpeedFilter(minSpeed, maxSpeed);
+    }
+  }, [isMapReady, fogRadius, heatmapStrength, heatmapEnabled, minSpeed, maxSpeed, updateFogRadius, updateHeatmapStrength, toggleHeatmapLayer, updateSpeedFilter]);
+
   const clearDatabase = async () => {
-    if (!window.confirm("Delete all data?")) return;
+    console.log('[DEBUG] clearDatabase called. confirmClear:', confirmClear);
+    
+    if (!confirmClear) {
+      console.log('[DEBUG] First click: setting confirm state');
+      setConfirmClear(true);
+      // Automatically reset confirmation after 4 seconds of inactivity
+      setTimeout(() => setConfirmClear(false), 4000);
+      return;
+    }
+
+    console.log('[DEBUG] Second click: confirmed. Clearing...');
     try {
+      setConfirmClear(false);
       await databaseService.clearDatabase();
       refreshLayers();
       setRegionStats(null);
       alert("Database cleared.");
     } catch (err) {
-      console.error("Clear database failed", err);
+      console.error("[DEBUG] Clear database failed:", err);
     }
   };
 
@@ -379,8 +451,13 @@ function AppContent({ initError }: { initError: string | null }) {
         loading={loading}
         showGrid={showGrid}
         toggleGrid={toggleGrid}
+        minSpeed={minSpeed}
+        maxSpeed={maxSpeed}
+        onMinSpeedChange={handleMinSpeedChange}
+        onMaxSpeedChange={handleMaxSpeedChange}
         autoSyncActive={autoSyncActive}
         onToggleAutoSync={toggleAutoSync}
+        confirmClear={confirmClear}
         isAdmin={session.role === 'admin'}
       />
       

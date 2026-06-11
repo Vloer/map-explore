@@ -171,7 +171,7 @@ export class ImportService {
   /**
    * Imports a list of raw coordinates and timestamps from Ulogger.
    */
-  async bulkImportPoints(rawPoints: { latitude: number, longitude: number, time: string }[]) {
+  async bulkImportPoints(rawPoints: { latitude: number, longitude: number, time: string, speed?: number | string | null }[]) {
     const points: SignalPoint[] = [];
     let lastLatE7 = 0;
     let lastLngE7 = 0;
@@ -185,8 +185,18 @@ export class ImportService {
       
       if (isNaN(timestamp)) continue;
 
+      // Robust speed parsing: handle string numbers, literal nulls, or undefined
+      // Convert speed from m/s to km/h
+      let speedKmh: number | undefined = undefined;
+      if (p.speed !== undefined && p.speed !== null && p.speed !== "") {
+        const numericSpeed = Number(p.speed);
+        if (!isNaN(numericSpeed)) {
+          speedKmh = numericSpeed * 3.6;
+        }
+      }
+
       if (getDistanceE7(lastLatE7, lastLngE7, latE7, lngE7) > APP_CONFIG.IMPORT_DECIMATION_METERS) {
-        points.push({ latE7, lngE7, timestamp });
+        points.push({ latE7, lngE7, timestamp, speed: speedKmh });
         lastLatE7 = latE7;
         lastLngE7 = lngE7;
       }

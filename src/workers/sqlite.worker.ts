@@ -37,6 +37,7 @@ async function init(config?: { gridMeters: number }) {
         lat_e7 INTEGER,
         lng_e7 INTEGER,
         timestamp INTEGER,
+        speed REAL,
         PRIMARY KEY (lat_e7, lng_e7, timestamp)
       );
 
@@ -46,6 +47,7 @@ async function init(config?: { gridMeters: number }) {
         grid_id INTEGER,
         visit_count INTEGER DEFAULT 0,
         latest_timestamp INTEGER,
+        latest_speed REAL,
         PRIMARY KEY (lat_e7, lng_e7)
       );
       CREATE INDEX IF NOT EXISTS idx_loc_grid_id ON locations(grid_id);
@@ -87,18 +89,27 @@ async function init(config?: { gridMeters: number }) {
     db.exec(`
       DROP TRIGGER IF EXISTS ai_signals;
       CREATE TRIGGER ai_signals AFTER INSERT ON signals BEGIN
-        INSERT INTO locations (lat_e7, lng_e7, grid_id, visit_count, latest_timestamp)
+        INSERT INTO locations (lat_e7, lng_e7, grid_id, visit_count, latest_timestamp, latest_speed)
         VALUES (
           new.lat_e7, 
           new.lng_e7, 
           ( (CASE WHEN new.lat_e7 < 0 AND new.lat_e7 % ${gridSizeE7} != 0 THEN (new.lat_e7 / ${gridSizeE7}) - 1 ELSE new.lat_e7 / ${gridSizeE7} END) * 10000000 + 
             (CASE WHEN new.lng_e7 < 0 AND new.lng_e7 % ${gridSizeE7} != 0 THEN (new.lng_e7 / ${gridSizeE7}) - 1 ELSE new.lng_e7 / ${gridSizeE7} END) ),
           1, 
-          new.timestamp
+          new.timestamp,
+          new.speed
         )
         ON CONFLICT(lat_e7, lng_e7) DO UPDATE SET
           visit_count = visit_count + 1,
+          latest_speed = CASE WHEN new.timestamp >= latest_timestamp THEN new.speed ELSE latest_speed END,
           latest_timestamp = MAX(latest_timestamp, excluded.latest_timestamp);
+      END;
+
+      DROP TRIGGER IF EXISTS au_signals;
+      CREATE TRIGGER au_signals AFTER UPDATE OF speed ON signals BEGIN
+        UPDATE locations SET
+          latest_speed = CASE WHEN new.timestamp >= latest_timestamp THEN new.speed ELSE latest_speed END
+        WHERE lat_e7 = new.lat_e7 AND lng_e7 = new.lng_e7;
       END;
     `);
 
@@ -116,6 +127,19 @@ async function init(config?: { gridMeters: number }) {
       },
       null
     );
+    
+    // Add speed column to existing databases seamlessly
+    try {
+      db.exec('ALTER TABLE signals ADD COLUMN speed REAL;');
+    } catch (e) {
+      // Column already exists or table is new, safe to ignore
+    }
+
+    try {
+      db.exec('ALTER TABLE locations ADD COLUMN latest_speed REAL;');
+    } catch (e) {
+      // Column already exists or table is new, safe to ignore
+    }
 
     log(`Tables initialized (Grid: ${gridSizeMeters}m) and tracing enabled.`);
   } catch (err) {
@@ -150,15 +174,23 @@ const handlers: Record<string, (data: any) => Promise<unknown>> = {
     return rows;
   },
 
-  async bulkInsertSignals({ points }: { points: { latE7: number, lngE7: number, timestamp: number }[] }) {
+  async bulkInsertSignals({ points }: { points: { latE7: number, lngE7: number, timestamp: number, speed?: number }[] }) {
     if (!db) await init();
     
     try {
       db.exec('BEGIN TRANSACTION');
-      const insertSignal = db.prepare('INSERT OR IGNORE INTO signals (lat_e7, lng_e7, timestamp) VALUES (?, ?, ?)');
+      const insertSignal = db.prepare(`
+        INSERT INTO signals (lat_e7, lng_e7, timestamp, speed) 
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(lat_e7, lng_e7, timestamp) DO UPDATE SET
+          speed = excluded.speed
+        WHERE speed IS NULL AND excluded.speed IS NOT NULL
+      `);
 
       for (const p of points) {
-        insertSignal.bind([p.latE7, p.lngE7, p.timestamp]).step();
+        // Robust check for speed to avoid 0 becoming null
+        const speed = (p.speed !== undefined && p.speed !== null) ? p.speed : null;
+        insertSignal.bind([p.latE7, p.lngE7, p.timestamp, speed]).step();
         insertSignal.reset();
       }
       

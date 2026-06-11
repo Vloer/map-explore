@@ -9,6 +9,7 @@ export interface SignalPoint {
   latE7: number;
   lngE7: number;
   timestamp: number;
+  speed?: number; // In km/h
 }
 
 interface WorkerMessage {
@@ -214,7 +215,7 @@ export class DatabaseService {
       lng: rows[0].lng_e7 / 1e7
     };
   }
-  async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number, minDetailMeters: number = 0): Promise<{lat: number, lng: number, visits: number}[]> {
+  async getPointsInBounds(minLat: number, maxLat: number, minLng: number, maxLng: number, minDetailMeters: number = 0, minSpeed?: number, maxSpeed?: number): Promise<{lat: number, lng: number, visits: number}[]> {
     const minLatE7 = Math.round(minLat * 1e7);
     const maxLatE7 = Math.round(maxLat * 1e7);
     const minLngE7 = Math.round(minLng * 1e7);
@@ -222,9 +223,23 @@ export class DatabaseService {
 
     const factor = Math.max(1, metersToE7(minDetailMeters));
     
+    let speedClause = '';
+    const bind: any[] = [minLatE7, maxLatE7, minLngE7, maxLngE7];
+    
+    // Only apply filter if it's not the "show all" default (0 to 200)
+    // This allows existing data with NULL speed to be shown.
+    if (minSpeed !== undefined && minSpeed >= 0 && minSpeed != null) {
+      speedClause += ' AND latest_speed >= ?';
+      bind.push(minSpeed);
+    }
+    if (maxSpeed !== undefined && maxSpeed <= 200 && maxSpeed != null) {
+      speedClause += ' AND latest_speed <= ?';
+      bind.push(maxSpeed);
+    }
+    
     let sql: string;
     if (factor <= metersToE7(APP_CONFIG.DETAIL_RADIUS_METERS)) {
-      sql = `SELECT lat_e7, lng_e7, visit_count FROM locations WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?`;
+      sql = `SELECT lat_e7, lng_e7, visit_count FROM locations WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?${speedClause}`;
     } else {
       sql = `
         SELECT 
@@ -232,14 +247,14 @@ export class DatabaseService {
           (lng_e7 / ${factor}) * ${factor} + (${factor} / 2) as lng_e7,
           SUM(visit_count) as visit_count
         FROM locations 
-        WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
+        WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?${speedClause}
         GROUP BY lat_e7 / ${factor}, lng_e7 / ${factor}
       `;
     }
 
     const rows = await this.send('query', {
       sql,
-      bind: [minLatE7, maxLatE7, minLngE7, maxLngE7]
+      bind
     }) as { lat_e7: number, lng_e7: number, visit_count: number }[];
 
     return rows.map((r) => ({
@@ -252,25 +267,38 @@ export class DatabaseService {
   /**
    * Finds the nearest location point and returns aggregated data for its grid cell.
    */
-  async getNearestPoint(lat: number, lng: number, radiusDegrees: number): Promise<{lat: number, lng: number, timestamp: number, visits: number} | null> {
+  async getNearestPoint(lat: number, lng: number, radiusDegrees: number, minSpeed?: number, maxSpeed?: number): Promise<{lat: number, lng: number, timestamp: number, visits: number, speed?: number} | null> {
     const latE7 = Math.round(lat * 1e7);
     const lngE7 = Math.round(lng * 1e7);
     const radE7 = Math.round(radiusDegrees * 1e7);
 
-    // 1. Find the nearest individual point to determine which grid cell we are looking at
+    let speedClause = '';
+    const bind: any[] = [latE7 - radE7, latE7 + radE7, lngE7 - radE7, lngE7 + radE7];
+    
+    // Only apply filter if it's not the "show all" default (0 to 200)
+    if (minSpeed !== undefined && minSpeed >= 0 && minSpeed != null) {
+      speedClause += ' AND latest_speed >= ?';
+      bind.push(minSpeed);
+    }
+    if (maxSpeed !== undefined && maxSpeed <= 200 && maxSpeed != null) {
+      speedClause += ' AND latest_speed <= ?';
+      bind.push(maxSpeed);
+    }
+
+    // 1. Find the nearest individual point
     const rows = await this.send('query', {
       sql: `
-        SELECT lat_e7, lng_e7, grid_id
+        SELECT lat_e7, lng_e7, grid_id, latest_speed, latest_timestamp
         FROM locations 
-        WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?
+        WHERE lat_e7 BETWEEN ? AND ? AND lng_e7 BETWEEN ? AND ?${speedClause}
         LIMIT ${APP_CONFIG.NEAREST_QUERY_LIMIT}
       `,
-      bind: [latE7 - radE7, latE7 + radE7, lngE7 - radE7, lngE7 + radE7]
-    }) as { lat_e7: number, lng_e7: number, grid_id: number }[];
+      bind
+    }) as { lat_e7: number, lng_e7: number, grid_id: number, latest_speed: number, latest_timestamp: number }[];
 
     if (rows.length === 0) return null;
 
-    let nearestPoint: { lat_e7: number, lng_e7: number, grid_id: number } | null = null;
+    let nearestRow: { lat_e7: number, lng_e7: number, grid_id: number, latest_speed: number, latest_timestamp: number } | null = null;
     let minBaseDist = Infinity;
 
     for (const row of rows) {
@@ -280,31 +308,30 @@ export class DatabaseService {
       
       if (distSq < minBaseDist) {
         minBaseDist = distSq;
-        nearestPoint = row;
+        nearestRow = row;
       }
     }
 
-    if (!nearestPoint) return null;
+    if (!nearestRow) return null;
 
-    // 2. Get aggregated stats for that specific grid cell
+    // 2. Get aggregated visits for that specific grid cell
     const statsRows = await this.send('query', {
       sql: `
-        SELECT 
-          MAX(latest_timestamp) as latest_timestamp, 
-          SUM(visit_count) as total_visits 
+        SELECT SUM(visit_count) as total_visits 
         FROM locations 
         WHERE grid_id = ?
       `,
-      bind: [nearestPoint.grid_id]
-    }) as { latest_timestamp: number, total_visits: number }[];
+      bind: [nearestRow.grid_id]
+    }) as { total_visits: number }[];
 
-    const stats = statsRows[0];
+    const totalVisits = statsRows.length > 0 ? statsRows[0].total_visits : 0;
 
     return { 
-      lat: nearestPoint.lat_e7 / 1e7, 
-      lng: nearestPoint.lng_e7 / 1e7, 
-      timestamp: stats.latest_timestamp, 
-      visits: stats.total_visits 
+      lat: nearestRow.lat_e7 / 1e7, 
+      lng: nearestRow.lng_e7 / 1e7, 
+      timestamp: nearestRow.latest_timestamp, 
+      visits: totalVisits,
+      speed: nearestRow.latest_speed
     };
   }
 

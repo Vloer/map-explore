@@ -69,6 +69,7 @@ export interface DetailedLocationPoint {
   lng: number;
   timestamp: number;
   visits: number;
+  speed?: number;
 }
 
 export interface RegionStats {

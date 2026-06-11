@@ -16,8 +16,13 @@ interface ControlsProps {
   loading: boolean;
   showGrid: boolean;
   toggleGrid: (enabled: boolean) => void;
+  minSpeed: number;
+  maxSpeed: number;
+  onMinSpeedChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onMaxSpeedChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   autoSyncActive: boolean;
   onToggleAutoSync: () => void;
+  confirmClear: boolean;
   isAdmin: boolean;
 }
 
@@ -38,8 +43,13 @@ export function Controls({
   loading,
   showGrid,
   toggleGrid,
+  minSpeed,
+  maxSpeed,
+  onMinSpeedChange,
+  onMaxSpeedChange,
   autoSyncActive,
   onToggleAutoSync,
+  confirmClear,
   isAdmin,
 }: ControlsProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -49,25 +59,23 @@ export function Controls({
     <div
       style={{
         position: "absolute",
-        bottom: "calc(20px + env(safe-area-inset-bottom, 0px))",
+        bottom: "10px",
         left: "calc(10px + env(safe-area-inset-left, 0px))",
         right: "calc(10px + env(safe-area-inset-right, 0px))",
         backgroundColor: "rgba(26, 26, 26, 0.95)",
-        padding: isCollapsed ? "10px 20px" : "20px",
-        paddingBottom: isCollapsed
-          ? "10px"
-          : "calc(20px + env(safe-area-inset-bottom, 0px))",
+        padding: isCollapsed ? "10px 20px" : "15px 20px",
         borderRadius: "12px",
         color: "white",
         display: "flex",
         flexDirection: "column",
-        gap: isCollapsed ? "0" : "20px",
+        gap: isCollapsed ? "0" : "15px",
         zIndex: 10,
         border: "1px solid #333",
         boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
         transition: "all 0.3s ease-in-out",
-        maxHeight: isCollapsed ? "50px" : "70vh",
-        overflow: "hidden",
+        maxHeight: isCollapsed ? "50px" : "85vh",
+        overflowY: "auto",
+        marginBottom: "env(safe-area-inset-bottom, 0px)",
       }}
     >
       <div
@@ -275,6 +283,39 @@ export function Controls({
               {loading ? "Processing..." : "Import History"}
             </button>
             
+            <div style={{ width: "100%", display: "flex", flexWrap: "wrap", gap: "20px", padding: "10px 0", borderTop: "1px solid #333", borderBottom: "1px solid #333", marginTop: "10px" }}>
+              <div style={{ flex: "1 1 200px" }}>
+                <div style={{ marginBottom: "8px", display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#aaa" }}>
+                  <span>Min Speed Filter</span>
+                  <span style={{ color: "#FFEB3B", fontWeight: "bold" }}>{minSpeed} km/h</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="150"
+                  step="1"
+                  value={minSpeed}
+                  onChange={onMinSpeedChange}
+                  style={{ width: "100%", cursor: "pointer" }}
+                />
+              </div>
+              <div style={{ flex: "1 1 200px" }}>
+                <div style={{ marginBottom: "8px", display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#aaa" }}>
+                  <span>Max Speed Filter</span>
+                  <span style={{ color: "#FFEB3B", fontWeight: "bold" }}>{maxSpeed} km/h</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  step="1"
+                  value={maxSpeed}
+                  onChange={onMaxSpeedChange}
+                  style={{ width: "100%", cursor: "pointer" }}
+                />
+              </div>
+            </div>
+
             {isAdmin && (
               <>
                 <button
@@ -295,20 +336,24 @@ export function Controls({
                 </button>
 
                 <button
-                  onClick={onClearDatabase}
+                  onClick={() => {
+                    console.log('[DEBUG] Reset Data button clicked in UI. confirmClear:', confirmClear);
+                    onClearDatabase();
+                  }}
                   style={{
-                    backgroundColor: "transparent",
-                    color: "#f44336",
+                    backgroundColor: confirmClear ? "#f44336" : "transparent",
+                    color: confirmClear ? "#fff" : "#f44336",
                     border: "1px solid #f44336",
                     borderRadius: "6px",
                     padding: "8px 16px",
                     cursor: "pointer",
                     fontSize: "13px",
-                    fontWeight: "600",
+                    fontWeight: "bold",
                     flex: "1 1 auto",
+                    transition: "all 0.2s"
                   }}
                 >
-                  Reset Data
+                  {confirmClear ? "CONFIRM RESET" : "Reset Data"}
                 </button>
               </>
             )}

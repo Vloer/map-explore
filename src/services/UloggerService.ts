@@ -14,6 +14,7 @@ export interface UloggerPoint {
   latitude: number;
   longitude: number;
   time: string;
+  speed?: number;
 }
 
 export interface UloggerSession {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { APP_CONFIG } from '../Config';
 
 export function LoginScreen() {
   const { login } = useAuth();
@@ -130,7 +131,7 @@ export function LoginScreen() {
             📖 Read the Setup Guide
           </a>
           <a 
-            href="http://62.238.4.160/register.php" 
+            href={APP_CONFIG.ULOGGER_CONFIG.REGISTER_URL} 
             style={{ color: '#2196F3', textDecoration: 'none', fontSize: '14px', fontWeight: 'bold' }}
           >
             Don't have an account? Register here

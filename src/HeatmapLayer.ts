@@ -23,6 +23,10 @@ export class HeatmapLayer {
   public meterRadius: number = APP_CONFIG.BASE_FOG_REVEAL_RADIUS;
   /** The maximum number of visits to scale the heatmap colors. */
   public maxVisits: number = APP_CONFIG.HEATMAP_MAX_VISITS;
+  /** Minimum speed filter in km/h. */
+  public minSpeed: number | undefined = undefined;
+  /** Maximum speed filter in km/h. */
+  public maxSpeed: number | undefined = undefined;
 
   /**
    * Creates an instance of HeatmapLayer.
@@ -113,7 +117,9 @@ export class HeatmapLayer {
       bounds.getNorth() + latBuffer,
       bounds.getWest() - lngBuffer,
       bounds.getEast() + lngBuffer,
-      this.detailMeters
+      this.detailMeters,
+      this.minSpeed,
+      this.maxSpeed
     );
     
     console.debug(`HeatmapLayer: Refreshed data. Points: ${this.points.length} (${(performance.now() - start).toFixed(2)}ms)`);

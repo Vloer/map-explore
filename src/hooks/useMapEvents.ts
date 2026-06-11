@@ -12,7 +12,7 @@ import type { TooltipData } from '../types';
  * @param {boolean} isMapReady Whether the map has finished loading.
  * @returns {object} Current tooltip data.
  */
-export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>, isMapReady: boolean) {
+export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>, isMapReady: boolean, minSpeed?: number, maxSpeed?: number) {
   const [tooltip, setTooltip] = useState<TooltipData | null>(null);
 
   useEffect(() => {
@@ -25,12 +25,13 @@ export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>,
      * Throttled mouse move handler to check for nearby visited points.
      */
     const onMouseMove = async (e: maplibregl.MapMouseEvent) => {
-      if (!map.current) return;
+      const currentMap = map.current;
+      if (!currentMap) return;
       
-      const zoom = map.current.getZoom();
+      const zoom = currentMap.getZoom();
       // Optimization: Don't query database if zoomed out too far (individual points not visible)
       if (zoom < 13) {
-        if (tooltip) setTooltip(null);
+        setTooltip(prev => prev ? null : prev);
         return;
       }
 
@@ -46,7 +47,7 @@ export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>,
       lastQueryPos = { x: e.point.x, y: e.point.y };
 
       const radius = APP_CONFIG.HOVER_RADIUS_DEGREES;
-      const nearest = await databaseService.getNearestPoint(e.lngLat.lat, e.lngLat.lng, radius);
+      const nearest = await databaseService.getNearestPoint(e.lngLat.lat, e.lngLat.lng, radius, minSpeed, maxSpeed);
       
       if (nearest) {
         const date = new Date(nearest.timestamp);
@@ -54,22 +55,26 @@ export function useMapEvents(map: React.MutableRefObject<maplibregl.Map | null>,
           year: 'numeric', month: '2-digit', day: '2-digit',
           hour: '2-digit', minute: '2-digit'
         });
+
+        const text = `${nearest.lat.toFixed(5)}, ${nearest.lng.toFixed(5)}\nLatest visit: ${timeStr}\nTotal signals: ${nearest.visits}`;
+        
         setTooltip({
           x: e.point.x,
           y: e.point.y,
-          text: `${nearest.lat.toFixed(5)}, ${nearest.lng.toFixed(5)}\nLatest visit: ${timeStr}\nTotal signals: ${nearest.visits}`
+          text
         });
       } else {
-        setTooltip(null);
+        setTooltip(prev => prev ? null : prev);
       }
     };
 
-    map.current.on('mousemove', onMouseMove);
+    const currentMap = map.current;
+    currentMap.on('mousemove', onMouseMove);
 
     return () => {
-      map.current?.off('mousemove', onMouseMove);
+      currentMap?.off('mousemove', onMouseMove);
     };
-  }, [isMapReady, map]);
+  }, [isMapReady, map, minSpeed, maxSpeed]);
 
   return { tooltip };
 }
