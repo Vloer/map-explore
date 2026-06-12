@@ -48,6 +48,8 @@ async function init(config?: { gridMeters: number }) {
         visit_count INTEGER DEFAULT 0,
         latest_timestamp INTEGER,
         latest_speed REAL,
+        min_speed REAL,
+        max_speed REAL,
         PRIMARY KEY (lat_e7, lng_e7)
       );
       CREATE INDEX IF NOT EXISTS idx_loc_grid_id ON locations(grid_id);
@@ -89,7 +91,7 @@ async function init(config?: { gridMeters: number }) {
     db.exec(`
       DROP TRIGGER IF EXISTS ai_signals;
       CREATE TRIGGER ai_signals AFTER INSERT ON signals BEGIN
-        INSERT INTO locations (lat_e7, lng_e7, grid_id, visit_count, latest_timestamp, latest_speed)
+        INSERT INTO locations (lat_e7, lng_e7, grid_id, visit_count, latest_timestamp, latest_speed, min_speed, max_speed)
         VALUES (
           new.lat_e7, 
           new.lng_e7, 
@@ -97,18 +99,24 @@ async function init(config?: { gridMeters: number }) {
             (CASE WHEN new.lng_e7 < 0 AND new.lng_e7 % ${gridSizeE7} != 0 THEN (new.lng_e7 / ${gridSizeE7}) - 1 ELSE new.lng_e7 / ${gridSizeE7} END) ),
           1, 
           new.timestamp,
+          new.speed,
+          new.speed,
           new.speed
         )
         ON CONFLICT(lat_e7, lng_e7) DO UPDATE SET
           visit_count = visit_count + 1,
           latest_speed = CASE WHEN new.timestamp >= latest_timestamp THEN new.speed ELSE latest_speed END,
-          latest_timestamp = MAX(latest_timestamp, excluded.latest_timestamp);
+          latest_timestamp = MAX(latest_timestamp, excluded.latest_timestamp),
+          min_speed = CASE WHEN new.speed IS NOT NULL THEN MIN(IFNULL(min_speed, new.speed), new.speed) ELSE min_speed END,
+          max_speed = CASE WHEN new.speed IS NOT NULL THEN MAX(IFNULL(max_speed, new.speed), new.speed) ELSE max_speed END;
       END;
 
       DROP TRIGGER IF EXISTS au_signals;
       CREATE TRIGGER au_signals AFTER UPDATE OF speed ON signals BEGIN
         UPDATE locations SET
-          latest_speed = CASE WHEN new.timestamp >= latest_timestamp THEN new.speed ELSE latest_speed END
+          latest_speed = CASE WHEN new.timestamp >= latest_timestamp THEN new.speed ELSE latest_speed END,
+          min_speed = CASE WHEN new.speed IS NOT NULL THEN MIN(IFNULL(min_speed, new.speed), new.speed) ELSE min_speed END,
+          max_speed = CASE WHEN new.speed IS NOT NULL THEN MAX(IFNULL(max_speed, new.speed), new.speed) ELSE max_speed END
         WHERE lat_e7 = new.lat_e7 AND lng_e7 = new.lng_e7;
       END;
     `);
