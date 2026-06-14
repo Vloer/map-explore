@@ -8,7 +8,7 @@ Follow these steps to get the tracker running on your phone and view your map.
 
 If you haven't already, go to the registration page:
 
-> **`http://62.238.4.160/register.php`**
+> **`https://mapexplorer.duckdns.org/register.php`**
 
 1. Enter **your name** (this will be your username).
 2. Enter the **invite code** your admin gave you.
@@ -69,7 +69,7 @@ We use a custom Android app to track locations. You can download it directly fro
 
 Open the MapExplorer website:
 
-> **`http://62.238.4.160/`**
+> **`https://mapexplorer.duckdns.org/`**
 
 1. Log in with your **username and password**.
 2. Tap the **Settings** panel at the bottom.
