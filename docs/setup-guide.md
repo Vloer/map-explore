@@ -39,7 +39,7 @@ We use a custom Android app to track locations. You can download it directly fro
 
 | Setting | Value |
 |---|---|
-| **Server URL** | Paste the Server URL from the registration page |
+| **Server URL** | Paste the Server URL: https://vloer-ulogger.duckdns.org |
 | **User name** | Your chosen username |
 | **Password** | Your chosen password |
 
